@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Form16Data } from "@/lib/tax/types";
 
 interface Form16UploadProps {
@@ -9,6 +9,18 @@ interface Form16UploadProps {
     fileName: string,
     meta: { matchedFields: string[]; lineCount: number },
   ) => void;
+}
+
+function formatUploadError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message || err.name || "Unknown error";
+  }
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return "Failed to parse PDF on this device.";
+  }
 }
 
 export function Form16Upload({ onParsed }: Form16UploadProps) {
@@ -25,16 +37,18 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
     setWarning(null);
 
     try {
+      const { parseForm16Pdf, isPdfFile } = await import("@/lib/form16/pdf");
       const merged: Partial<Form16Data> = {};
       const allMatched = new Set<string>();
       let totalLines = 0;
       const names: string[] = [];
 
       for (const file of Array.from(files)) {
-        if (file.type !== "application/pdf") {
-          throw new Error("Please upload PDF files only.");
+        if (!isPdfFile(file)) {
+          throw new Error(
+            `"${file.name}" does not look like a PDF. On mobile, ensure the file ends with .pdf`,
+          );
         }
-        const { parseForm16Pdf } = await import("@/lib/form16/pdf");
         const parsed = await parseForm16Pdf(file);
         Object.assign(merged, parsed.data);
         parsed.matchedFields.forEach((f) => allMatched.add(f));
@@ -61,7 +75,8 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         lineCount: totalLines,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to parse PDF.");
+      console.error("[Form16Upload]", err);
+      setError(formatUploadError(err));
     } finally {
       setLoading(false);
     }
@@ -85,7 +100,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
           {loading ? "Parsing PDF..." : "Choose PDF file(s)"}
           <input
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,.pdf"
             multiple
             className="hidden"
             disabled={loading}
@@ -109,9 +124,14 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         ) : null}
 
         {error ? (
-          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
+          <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+            <p className="font-semibold">Upload failed</p>
+            <p className="mt-1 break-words">{error}</p>
+            <p className="mt-2 text-xs text-red-600">
+              On mobile, if upload keeps failing, use Manual entry below — all
+              fields work without PDF upload.
+            </p>
+          </div>
         ) : null}
 
         <p className="mt-4 text-xs text-slate-500">

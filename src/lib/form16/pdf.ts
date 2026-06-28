@@ -1,5 +1,4 @@
 import { parseForm16Text } from "@/lib/form16/parser";
-import { ocrPdfDocument } from "@/lib/form16/ocr";
 import type {
   PdfDocument,
   PdfJsLib,
@@ -182,6 +181,17 @@ function textFromRaw(rawText: string, lines: string[]): string {
   return lines.join("\n") || rawText;
 }
 
+/** Scanned PDFs often have a junk metadata text layer — treat as empty. */
+function hasMeaningfulForm16Text(rawText: string, lines: string[]): boolean {
+  const text = textFromRaw(rawText, lines).trim();
+  if (text.length < 20) return false;
+  const digits = text.replace(/\D/g, "");
+  if (digits.length < 6) return false;
+  return /form\s*16|certificate|17\s*[\(]?1|gross|salary|80\s*[cCdD]|tds|tax\s*deduct|assessment/i.test(
+    text,
+  );
+}
+
 function buildExtractResult(
   rawText: string,
   lines: string[],
@@ -259,16 +269,26 @@ export async function extractTextFromPdf(
   const pdf = await openPdfDocument(pdfjs, buffer);
   let result = await extractTextFromPdfPages(pdf, onProgress);
 
-  const needsOcr = !result.rawText.trim();
+  const needsOcr = !hasMeaningfulForm16Text(result.rawText, result.lines);
   if (needsOcr) {
-    const ocrText = await ocrPdfDocument(pdf, onProgress);
-    result = buildExtractResult(
-      ocrText,
-      splitFlatIntoLines(ocrText),
-      pdf.numPages,
-      1,
-      true,
-    );
+    onProgress?.("No readable text — starting OCR…");
+    try {
+      const { ocrPdfDocument } = await import("@/lib/form16/ocr");
+      const ocrText = await ocrPdfDocument(pdf, onProgress);
+      result = buildExtractResult(
+        ocrText,
+        splitFlatIntoLines(ocrText),
+        pdf.numPages,
+        1,
+        true,
+      );
+    } catch (ocrErr) {
+      const detail =
+        ocrErr instanceof Error ? ocrErr.message : "OCR failed on this device.";
+      throw new Error(
+        `Could not read this PDF (scanned image). ${detail} Use Manual entry and enter your annual gross salary below.`,
+      );
+    }
   }
 
   return { ...result, usedOcr: needsOcr };
@@ -290,7 +310,7 @@ export async function parseForm16Pdf(
 
   if (!text.trim()) {
     throw new Error(
-      "Could not read text from this PDF. It may be a scanned image — use Manual entry, or open the PDF on desktop and re-save as PDF (not photo).",
+      "Could not read text from this PDF on your phone. It may be a scanned image — use Manual entry, or open the PDF on desktop and re-save as PDF (not photo).",
     );
   }
 

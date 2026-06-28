@@ -53,12 +53,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       }
 
       const matchedCount = Object.values(merged).filter((v) => v !== 0).length;
-      if (matchedCount === 0) {
-        if (totalChars === 0) {
-          throw new Error(
-            "Could not read text from this PDF on your phone. It may be a scanned image — use Manual entry, or open the PDF on desktop and re-save as PDF (not photo).",
-          );
-        }
+      if (matchedCount === 0 && totalChars > 0) {
         throw new Error(
           `Read ${totalChars.toLocaleString("en-IN")} characters (${totalLines} lines) but couldn't match Form 16 fields. Use Manual entry or the quick input fields below.`,
         );

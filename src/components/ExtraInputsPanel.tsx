@@ -54,15 +54,36 @@ export function ExtraInputsPanel({ quick, onChange }: ExtraInputsPanelProps) {
     <section className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
       <div className="mb-4">
         <h3 className="text-base font-semibold text-slate-900">
-          Additional exemptions &amp; deductions
+          Enter salary &amp; deductions
         </h3>
         <p className="mt-1 text-sm text-slate-500">
-          Add these alongside your Form 16 upload or manual entry. Quick inputs
-          replace the same Form 16 field when both are filled (no double counting).
+          Works without PDF upload — especially on mobile. Fill gross salary and
+          any deductions below, then compare regimes.
         </p>
       </div>
 
       <div className="space-y-6">
+        <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/50 p-4">
+          <h4 className="mb-3 text-sm font-semibold text-indigo-900">
+            Gross salary (required)
+          </h4>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <CurrencyInput
+              label="Annual gross salary u/s 17(1)"
+              hint="From Form 16 Part B — basic + allowances + bonus (before deductions)"
+              value={quick.annualGrossSalary}
+              onChange={(v) => update("annualGrossSalary", v)}
+            />
+            <div className="flex flex-col justify-end rounded-xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-600">
+              <p>
+                {quick.annualGrossSalary > 0
+                  ? `Using ${formatINR(quick.annualGrossSalary)} as gross salary`
+                  : "Enter your total annual salary from Form 16 Part B"}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h4 className="text-sm font-semibold text-slate-800">

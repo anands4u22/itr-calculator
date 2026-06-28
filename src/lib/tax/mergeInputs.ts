@@ -3,6 +3,7 @@ import { calculateHraExemption } from "./hra";
 import { MAX_80C, MAX_80CCD1B } from "./slabs";
 
 export interface QuickInputs {
+  annualGrossSalary: number;
   monthlyEmployerNps: number;
   monthlyHraReceived: number;
   monthlyRentPaid: number;
@@ -14,6 +15,7 @@ export interface QuickInputs {
 }
 
 export const EMPTY_QUICK_INPUTS: QuickInputs = {
+  annualGrossSalary: 0,
   monthlyEmployerNps: 0,
   monthlyHraReceived: 0,
   monthlyRentPaid: 0,
@@ -51,6 +53,10 @@ export function applyQuickInputs(
   quick: QuickInputs,
 ): Form16Data {
   const merged = { ...formData };
+
+  if (quick.annualGrossSalary > 0) {
+    merged.salary17_1 = quick.annualGrossSalary;
+  }
 
   const quickEmployerNpsAnnual =
     quick.monthlyEmployerNps > 0 ? quick.monthlyEmployerNps * 12 : 0;
@@ -97,6 +103,12 @@ export function applyQuickInputs(
 
 export function getQuickInputSummary(quick: QuickInputs): string[] {
   const lines: string[] = [];
+
+  if (quick.annualGrossSalary > 0) {
+    lines.push(
+      `Gross salary: ₹${quick.annualGrossSalary.toLocaleString("en-IN")}/yr`,
+    );
+  }
 
   if (quick.monthlyEmployerNps > 0) {
     lines.push(

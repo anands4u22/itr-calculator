@@ -2,29 +2,20 @@
 
 import { useState } from "react";
 import type { Form16Data } from "@/lib/tax/types";
+import { formatErrorForDisplay, isDebugMode } from "@/lib/utils/debug";
 
 interface Form16UploadProps {
   onParsed: (
     partial: Partial<Form16Data>,
     fileName: string,
-    meta: { matchedFields: string[]; lineCount: number },
+    meta: { matchedFields: string[]; lineCount: number; usedOcr?: boolean },
   ) => void;
 }
 
-function formatUploadError(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message || err.name || "Unknown error";
-  }
-  if (typeof err === "string") return err;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return "Failed to parse PDF on this device.";
-  }
-}
-
 export function Form16Upload({ onParsed }: Form16UploadProps) {
+  const debug = isDebugMode();
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileNames, setFileNames] = useState<string[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
@@ -33,6 +24,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
     if (!files?.length) return;
 
     setLoading(true);
+    setProgress("Starting…");
     setError(null);
     setWarning(null);
 
@@ -42,6 +34,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       const allMatched = new Set<string>();
       let totalLines = 0;
       let totalChars = 0;
+      let usedOcr = false;
       const names: string[] = [];
 
       for (const file of Array.from(files)) {
@@ -50,11 +43,12 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
             `"${file.name}" does not look like a PDF. On mobile, ensure the file ends with .pdf`,
           );
         }
-        const parsed = await parseForm16Pdf(file);
+        const parsed = await parseForm16Pdf(file, setProgress);
         Object.assign(merged, parsed.data);
         parsed.matchedFields.forEach((f) => allMatched.add(f));
         totalLines += parsed.lineCount;
         totalChars += parsed.charCount;
+        if (parsed.usedOcr) usedOcr = true;
         names.push(file.name);
       }
 
@@ -72,7 +66,14 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
 
       if (matchedCount < 3) {
         setWarning(
-          `Only ${matchedCount} field(s) detected (${[...allMatched].join(", ")}). Please review and fill in the rest manually.`,
+          `Only ${matchedCount} field(s) detected (${[...allMatched].join(", ")}). Review and fill the rest below.`,
+        );
+      }
+
+      if (usedOcr) {
+        setWarning(
+          (w) =>
+            `${w ? `${w} ` : ""}(Used OCR — please verify all numbers.)`,
         );
       }
 
@@ -80,12 +81,14 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       onParsed(merged, names.join(", "), {
         matchedFields: [...allMatched],
         lineCount: totalLines,
+        usedOcr,
       });
     } catch (err) {
       console.error("[Form16Upload]", err);
-      setError(formatUploadError(err));
+      setError(formatErrorForDisplay(err, debug));
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -95,16 +98,14 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-100 text-2xl">
           📄
         </div>
-        <h3 className="text-lg font-semibold text-slate-900">
-          Upload Form 16 Part A &amp; Part B
-        </h3>
+        <h3 className="text-lg font-semibold text-slate-900">Upload Form 16 PDF</h3>
         <p className="mt-2 text-sm text-slate-600">
-          Upload one combined PDF or separate Part A and Part B files. We&apos;ll
-          extract salary, deductions, and TDS automatically.
+          Upload Part A and/or Part B (PDF). Scanned PDFs are read with OCR
+          automatically.
         </p>
 
-        <label className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700">
-          {loading ? "Parsing PDF..." : "Choose PDF file(s)"}
+        <label className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60">
+          {loading ? "Processing…" : "Choose PDF file(s)"}
           <input
             type="file"
             accept="application/pdf,.pdf"
@@ -117,6 +118,10 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
             }}
           />
         </label>
+
+        {progress ? (
+          <p className="mt-3 text-sm font-medium text-indigo-700">{progress}</p>
+        ) : null}
 
         {fileNames.length > 0 ? (
           <p className="mt-3 text-xs text-emerald-700">
@@ -133,7 +138,9 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         {error ? (
           <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-left text-sm text-red-700">
             <p className="font-semibold">Upload failed</p>
-            <p className="mt-1 break-words">{error}</p>
+            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-sans text-xs">
+              {error}
+            </pre>
             <p className="mt-2 text-xs text-red-600">
               On mobile, if upload keeps failing, use Manual entry below — all
               fields work without PDF upload.
@@ -141,10 +148,11 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
           </div>
         ) : null}
 
-        <p className="mt-4 text-xs text-slate-500">
-          PDF parsing depends on your employer&apos;s format. Review extracted
-          values in the form below and edit anything that looks off.
-        </p>
+        {debug ? (
+          <p className="mt-2 break-all text-xs text-slate-500">
+            Debug: {typeof navigator !== "undefined" ? navigator.userAgent : ""}
+          </p>
+        ) : null}
       </div>
     </div>
   );

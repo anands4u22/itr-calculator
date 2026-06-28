@@ -13,6 +13,7 @@ import {
   getQuickInputSummary,
 } from "@/lib/tax/mergeInputs";
 import { FY_LABEL } from "@/lib/tax/slabs";
+import { isMobileDevice } from "@/lib/utils/device";
 import type { Form16Data } from "@/lib/tax/types";
 import type { QuickInputs } from "@/lib/tax/mergeInputs";
 
@@ -42,9 +43,13 @@ export function CalculatorApp() {
   const [parseSummary, setParseSummary] = useState<string | null>(null);
   const [showResults, setShowResults] = useState(false);
   const [showFullForm, setShowFullForm] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    const mobile = isMobileDevice();
+    setIsMobile(mobile);
+    if (mobile) setTab("manual");
   }, []);
 
   const effectiveFormData = useMemo(
@@ -63,6 +68,7 @@ export function CalculatorApp() {
   );
 
   const hasSalary =
+    quickInputs.annualGrossSalary > 0 ||
     effectiveFormData.salary17_1 > 0 ||
     effectiveFormData.perquisites17_2 > 0 ||
     effectiveFormData.profitsInLieu17_3 > 0;
@@ -116,6 +122,15 @@ export function CalculatorApp() {
       </div>
 
       <div className="space-y-6">
+        {isMobile ? (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+            <strong>On mobile:</strong> Enter your{" "}
+            <strong>annual gross salary</strong> below. PDF upload is optional.
+          </div>
+        ) : null}
+
+        <ExtraInputsPanel quick={quickInputs} onChange={setQuickInputs} />
+
         {tab === "upload" ? <Form16Upload onParsed={handleParsed} /> : null}
 
         {parsedFile ? (
@@ -127,11 +142,9 @@ export function CalculatorApp() {
                 <span className="text-emerald-700">{parseSummary}</span>
               </>
             ) : null}{" "}
-            Add NPS / HRA / 80G below if missing, then calculate.
+            Add NPS / HRA / 80G above if missing, then calculate.
           </div>
         ) : null}
-
-        <ExtraInputsPanel quick={quickInputs} onChange={setQuickInputs} />
 
         {quickSummary.length > 0 ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
@@ -185,8 +198,8 @@ export function CalculatorApp() {
 
         {!hasSalary ? (
           <p className="text-sm text-slate-500">
-            Enter gross salary (via PDF upload or manual Form 16 fields) to
-            calculate tax for {FY_LABEL}.
+            Enter <strong>annual gross salary</strong> above (from Form 16 Part B)
+            to calculate tax for {FY_LABEL}.
           </p>
         ) : null}
 

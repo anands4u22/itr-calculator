@@ -1,7 +1,15 @@
 import { parseForm16Text } from "@/lib/form16/parser";
+import { ocrPdfDocument } from "@/lib/form16/ocr";
+import type {
+  PdfDocument,
+  PdfJsLib,
+  PdfPage,
+  PdfTextItem,
+} from "@/lib/form16/pdf-types";
 import type { Form16Data } from "@/lib/tax/types";
 
-/** Pinned — keep in sync with package.json pdfjs-dist version */
+export type { PdfDocument, PdfPage } from "@/lib/form16/pdf-types";
+
 const PDFJS_VERSION = "4.8.69";
 const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
 
@@ -9,27 +17,6 @@ interface PositionedText {
   str: string;
   x: number;
   y: number;
-}
-
-interface PdfJsLib {
-  getDocument: (params: Record<string, unknown>) => { promise: Promise<PdfDocument> };
-  GlobalWorkerOptions: { workerSrc: string };
-  version?: string;
-}
-
-interface PdfDocument {
-  numPages: number;
-  getPage: (n: number) => Promise<PdfPage>;
-}
-
-interface PdfPage {
-  getTextContent: (params?: Record<string, unknown>) => Promise<{ items: PdfTextItem[] }>;
-}
-
-interface PdfTextItem {
-  str?: string;
-  transform?: number[];
-  hasEOL?: boolean;
 }
 
 declare global {
@@ -43,7 +30,10 @@ export interface PdfExtractResult {
   rawText: string;
   pageCount: number;
   textItemCount: number;
+  usedOcr: boolean;
 }
+
+export type PdfProgressCallback = (message: string) => void;
 
 function isMobileBrowser(): boolean {
   if (typeof navigator === "undefined") return false;
@@ -52,21 +42,15 @@ function isMobileBrowser(): boolean {
   );
 }
 
+export function isPdfFile(file: File): boolean {
+  if (file.type === "application/pdf") return true;
+  return file.name.toLowerCase().endsWith(".pdf");
+}
+
 async function loadPdfJsFromCdn(): Promise<PdfJsLib> {
-  if (window.pdfjsLib?.getDocument) {
-    return window.pdfjsLib;
-  }
+  if (window.pdfjsLib?.getDocument) return window.pdfjsLib;
 
   await new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector("script[data-pdfjs-cdn]");
-    if (existing) {
-      const check = () =>
-        window.pdfjsLib?.getDocument ? resolve() : reject(new Error("PDF.js CDN unavailable"));
-      existing.addEventListener("load", () => setTimeout(check, 50));
-      if (window.pdfjsLib?.getDocument) resolve();
-      return;
-    }
-
     const script = document.createElement("script");
     script.src = `${PDFJS_CDN_BASE}/pdf.min.js`;
     script.async = true;
@@ -82,19 +66,15 @@ async function loadPdfJsFromCdn(): Promise<PdfJsLib> {
     document.head.appendChild(script);
   });
 
-  const lib = window.pdfjsLib!;
+  const lib = window.pdfjsLib as PdfJsLib;
   lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
   return lib;
 }
 
 async function loadPdfJsFromBundle(): Promise<PdfJsLib> {
   const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const lib = (mod as { default?: PdfJsLib }).default ?? (mod as PdfJsLib);
-
-  if (!lib?.getDocument) {
-    throw new Error("Bundled PDF.js missing getDocument export.");
-  }
-
+  const lib = ((mod as { default?: unknown }).default ?? mod) as PdfJsLib;
+  if (!lib?.getDocument) throw new Error("Bundled PDF.js missing getDocument.");
   lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
   return lib;
 }
@@ -103,7 +83,6 @@ async function getPdfJs(): Promise<PdfJsLib> {
   if (typeof window === "undefined") {
     throw new Error("PDF parsing is only available in the browser.");
   }
-
   if (isMobileBrowser()) {
     try {
       return await loadPdfJsFromCdn();
@@ -111,7 +90,6 @@ async function getPdfJs(): Promise<PdfJsLib> {
       return loadPdfJsFromBundle();
     }
   }
-
   try {
     return await loadPdfJsFromBundle();
   } catch {
@@ -124,7 +102,6 @@ async function openPdfDocument(
   buffer: ArrayBuffer,
 ): Promise<PdfDocument> {
   const data = new Uint8Array(buffer);
-
   const tryOpen = (disableWorker: boolean) =>
     pdfjs.getDocument({
       data,
@@ -134,7 +111,6 @@ async function openPdfDocument(
       verbosity: 0,
     }).promise;
 
-  // Mobile: main-thread parsing often extracts text more reliably
   if (isMobileBrowser()) {
     try {
       return await tryOpen(true);
@@ -142,7 +118,6 @@ async function openPdfDocument(
       return tryOpen(false);
     }
   }
-
   try {
     return await tryOpen(false);
   } catch {
@@ -151,13 +126,11 @@ async function openPdfDocument(
 }
 
 function getItemText(item: PdfTextItem): string {
-  if (typeof item.str === "string") return item.str;
-  return "";
+  return typeof item.str === "string" ? item.str : "";
 }
 
 function groupIntoLines(items: PositionedText[]): string[] {
   if (items.length === 0) return [];
-
   const rowTolerance = 4;
   const rows = new Map<number, PositionedText[]>();
 
@@ -193,64 +166,58 @@ function joinItemsFlat(items: PdfTextItem[]): string {
   return parts.join("").replace(/\s+/g, " ").trim();
 }
 
-/** Split one long mobile PDF string into pseudo-lines for the parser */
 function splitFlatIntoLines(flat: string): string[] {
   const markers = [
-    "17(1)",
-    "17 (1)",
-    "17(2)",
-    "17 (2)",
-    "17(3)",
-    "Gross Salary",
-    "Section 10",
-    "Section 16",
-    "Chapter VI",
-    "80C",
-    "80CCD",
-    "80D",
-    "80G",
-    "Professional Tax",
-    "House Rent",
-    "tax deducted",
-    "TDS",
-    "Form 16",
+    "17(1)", "17 (1)", "17(2)", "Gross Salary", "80C", "80CCD",
+    "80D", "80G", "Professional Tax", "House Rent", "tax deducted", "Form 16",
   ];
-
   let text = flat;
   for (const marker of markers) {
     text = text.replace(new RegExp(`(${marker})`, "gi"), "\n$1");
   }
-
-  return text
-    .split("\n")
-    .map((l) => l.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  return text.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
 }
 
-async function extractPageContent(pdf: PdfDocument, pageNum: number) {
-  const page = await pdf.getPage(pageNum);
-  const content = await page.getTextContent({
-    normalizeWhitespace: true,
-    disableCombineTextItems: false,
-  });
-  return content.items;
+function textFromRaw(rawText: string, lines: string[]): string {
+  return lines.join("\n") || rawText;
 }
 
-export async function extractTextFromPdf(file: File): Promise<PdfExtractResult> {
-  const pdfjs = await getPdfJs();
-  const buffer = await file.arrayBuffer();
-
-  if (buffer.byteLength === 0) {
-    throw new Error("The selected file is empty.");
+function buildExtractResult(
+  rawText: string,
+  lines: string[],
+  pageCount: number,
+  textItemCount: number,
+  usedOcr: boolean,
+): PdfExtractResult {
+  let finalLines = lines.filter(Boolean);
+  if (finalLines.length === 0 && rawText.trim()) {
+    finalLines = splitFlatIntoLines(rawText);
   }
+  if (finalLines.length === 0 && rawText.trim()) {
+    finalLines = [rawText];
+  }
+  return {
+    lines: finalLines,
+    rawText,
+    pageCount,
+    textItemCount,
+    usedOcr,
+  };
+}
 
-  const pdf = await openPdfDocument(pdfjs, buffer);
+async function extractTextFromPdfPages(
+  pdf: PdfDocument,
+  onProgress?: PdfProgressCallback,
+): Promise<Omit<PdfExtractResult, "usedOcr">> {
   const positionedLines: string[] = [];
   const flatParts: string[] = [];
   let textItemCount = 0;
 
   for (let i = 1; i <= pdf.numPages; i++) {
-    const items = await extractPageContent(pdf, i);
+    onProgress?.(`Reading page ${i} of ${pdf.numPages}…`);
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent({ normalizeWhitespace: true });
+    const items = content.items;
     textItemCount += items.length;
 
     const flatPage = joinItemsFlat(items);
@@ -260,74 +227,80 @@ export async function extractTextFromPdf(file: File): Promise<PdfExtractResult> 
     for (const item of items) {
       const str = getItemText(item);
       if (!str.trim()) continue;
-      const transform = item.transform;
+      const t = item.transform;
       positioned.push({
         str,
-        x: transform && transform.length >= 5 ? (transform[4] ?? 0) : 0,
-        y: transform && transform.length >= 6 ? (transform[5] ?? 0) : 0,
+        x: t && t.length >= 5 ? (t[4] ?? 0) : 0,
+        y: t && t.length >= 6 ? (t[5] ?? 0) : 0,
       });
     }
-
     positionedLines.push(...groupIntoLines(positioned));
   }
 
   const rawText = flatParts.join("\n");
-  let lines = positionedLines.filter(Boolean);
-
-  if (lines.length === 0 && rawText) {
-    lines = splitFlatIntoLines(rawText);
-  }
-
-  if (lines.length === 0 && rawText) {
-    lines = [rawText];
-  }
-
-  return {
-    lines,
+  return buildExtractResult(
     rawText,
-    pageCount: pdf.numPages,
+    positionedLines,
+    pdf.numPages,
     textItemCount,
-  };
+    false,
+  );
 }
 
-export async function extractLinesFromPdf(file: File): Promise<string[]> {
-  const result = await extractTextFromPdf(file);
-  return result.lines;
+export async function extractTextFromPdf(
+  file: File,
+  onProgress?: PdfProgressCallback,
+): Promise<PdfExtractResult> {
+  const pdfjs = await getPdfJs();
+  const buffer = await file.arrayBuffer();
+  if (buffer.byteLength === 0) throw new Error("The selected file is empty.");
+
+  onProgress?.("Opening PDF…");
+  const pdf = await openPdfDocument(pdfjs, buffer);
+  let result = await extractTextFromPdfPages(pdf, onProgress);
+
+  const needsOcr = !result.rawText.trim();
+  if (needsOcr) {
+    const ocrText = await ocrPdfDocument(pdf, onProgress);
+    result = buildExtractResult(
+      ocrText,
+      splitFlatIntoLines(ocrText),
+      pdf.numPages,
+      1,
+      true,
+    );
+  }
+
+  return { ...result, usedOcr: needsOcr };
 }
 
-export async function parseForm16Pdf(file: File): Promise<{
+export async function parseForm16Pdf(
+  file: File,
+  onProgress?: PdfProgressCallback,
+): Promise<{
   data: Partial<Form16Data>;
   matchedFields: string[];
   lineCount: number;
   charCount: number;
   pageCount: number;
+  usedOcr: boolean;
 }> {
-  const extracted = await extractTextFromPdf(file);
-  const text = extracted.lines.join("\n") || extracted.rawText;
+  const extracted = await extractTextFromPdf(file, onProgress);
+  const text = textFromRaw(extracted.rawText, extracted.lines);
 
   if (!text.trim()) {
-    if (extracted.pageCount > 0 && extracted.textItemCount === 0) {
-      throw new Error(
-        "This PDF appears to be a scanned image with no readable text. Please use Manual entry, or ask your employer for a text-based Form 16 PDF.",
-      );
-    }
     throw new Error(
-      "Could not read any text from this PDF on your device. Please use Manual entry below.",
+      "Could not read text from this PDF. It may be a scanned image — use Manual entry, or open the PDF on desktop and re-save as PDF (not photo).",
     );
   }
 
   const result = parseForm16Text(text);
-
   return {
     data: result.data,
     matchedFields: result.matchedFields,
     lineCount: extracted.lines.length,
     charCount: text.length,
     pageCount: extracted.pageCount,
+    usedOcr: extracted.usedOcr,
   };
-}
-
-export function isPdfFile(file: File): boolean {
-  if (file.type === "application/pdf") return true;
-  return file.name.toLowerCase().endsWith(".pdf");
 }

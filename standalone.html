@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ITR Calculator — Form 16 Tax Comparison</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top, #eef2ff, #f8fafc 45%);
+      color: #0f172a;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { font-size: 2rem; margin: 0.5rem 0; }
+    .sub { color: #475569; max-width: 700px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 1rem;
+      padding: 1.25rem;
+      margin-top: 1rem;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    label { display: block; font-size: 0.875rem; font-weight: 600; color: #334155; margin-bottom: 0.35rem; }
+    .hint { font-size: 0.75rem; color: #64748b; font-weight: 400; margin-top: 0.15rem; }
+    input[type="number"], input[type="file"] { width: 100%; padding: 0.65rem 0.75rem; border: 1px solid #cbd5e1; border-radius: 0.75rem; }
+    .btn {
+      border: 0; border-radius: 0.75rem; padding: 0.75rem 1.25rem;
+      font-weight: 700; cursor: pointer; font-size: 0.9rem;
+    }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-secondary { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+    .upload {
+      border: 2px dashed #a5b4fc; background: #eef2ff80; text-align: center; padding: 1.5rem;
+    }
+    .banner { background: linear-gradient(90deg, #0f172a, #312e81); color: #fff; }
+    .banner .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem; }
+    .stat { background: rgba(255,255,255,.1); border-radius: 0.75rem; padding: 0.75rem; }
+    .compare { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 800px) { .compare { grid-template-columns: 1fr; } }
+    .regime.best { border-color: #34d399; box-shadow: 0 0 0 2px #d1fae5; }
+    .badge { background: #d1fae5; color: #065f46; font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 999px; font-weight: 700; }
+    .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.45rem 0; border-bottom: 1px solid #f1f5f9; font-size: 0.875rem; }
+    .row strong { color: #0f172a; }
+    .error { background: #fef2f2; color: #b91c1c; padding: 0.75rem; border-radius: 0.5rem; margin-top: 0.75rem; }
+    .ok { background: #ecfdf5; color: #047857; padding: 0.75rem; border-radius: 0.5rem; margin-top: 0.75rem; }
+    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem; }
+    footer { margin-top: 2rem; color: #64748b; font-size: 0.85rem; border-top: 1px solid #e2e8f0; padding-top: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p style="color:#4f46e5;font-weight:700;text-transform:uppercase;font-size:.8rem;">ITR Calculator</p>
+    <h1>Form 16 Tax Regime Comparison</h1>
+    <p class="sub">Compare tax under <b>new</b> vs <b>old</b> regime for FY 2025-26 (AY 2026-27). No server needed — open this file directly in your browser.</p>
+
+    <div class="card upload">
+      <h3>Upload Form 16 PDF (Part A &amp; Part B)</h3>
+      <p style="color:#475569;font-size:.9rem;">Optional — values will populate the form below. Always review before calculating.</p>
+      <input type="file" id="pdfInput" accept="application/pdf" multiple />
+      <div id="uploadMsg"></div>
+    </div>
+
+    <div class="card">
+      <h3>Salary &amp; Deductions (Form 16 Part B)</h3>
+      <div class="grid" id="formGrid"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="calcBtn">Compare tax regimes</button>
+        <button class="btn btn-secondary" id="resetBtn">Reset</button>
+      </div>
+    </div>
+
+    <div id="results"></div>
+
+    <footer>
+      Estimate for salaried individuals only. Not tax advice. Surcharge and complex cases not covered.
+      <br><br>
+      <b>To run the full Next.js app later:</b> open terminal → <code>cd C:\Users\sanan\Projects\itr-calculator</code> → <code>npm install</code> → <code>npm run dev</code> → visit http://localhost:3000
+    </footer>
+  </div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    const FIELDS = [
+      { key: "salary17_1", label: "Salary u/s 17(1)", hint: "Basic, DA, bonus" },
+      { key: "perquisites17_2", label: "Perquisites u/s 17(2)" },
+      { key: "profitsInLieu17_3", label: "Profits in lieu u/s 17(3)" },
+      { key: "hraExemption", label: "HRA exemption (old regime)" },
+      { key: "ltaExemption", label: "LTA exemption (old regime)" },
+      { key: "otherExemptions10", label: "Other exemptions u/s 10" },
+      { key: "professionalTax", label: "Professional tax u/s 16(iii)" },
+      { key: "section80C", label: "Section 80C (max 1.5L)" },
+      { key: "section80CCD1B", label: "Section 80CCD(1B)" },
+      { key: "section80D", label: "Section 80D" },
+      { key: "section80E", label: "Section 80E" },
+      { key: "section80G", label: "Section 80G" },
+      { key: "section80CCD2", label: "Section 80CCD(2) employer NPS" },
+      { key: "otherIncome", label: "Other income" },
+      { key: "housePropertyLoss", label: "House property loss", negative: true },
+      { key: "totalTds", label: "Total TDS (Part A)" },
+    ];
+
+    const data = Object.fromEntries(FIELDS.map(f => [f.key, 0]));
+
+    const fmt = n => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
+
+    function renderForm() {
+      const grid = document.getElementById("formGrid");
+      grid.innerHTML = FIELDS.map(f => `
+        <div>
+          <label>${f.label}${f.hint ? `<div class="hint">${f.hint}</div>` : ""}</label>
+          <input type="number" data-key="${f.key}" value="${data[f.key] || ""}" ${f.negative ? "" : 'min="0"'} step="1" />
+        </div>
+      `).join("");
+      grid.querySelectorAll("input").forEach(inp => {
+        inp.addEventListener("input", () => { data[inp.dataset.key] = Number(inp.value) || 0; });
+      });
+    }
+
+    function slabTax(income, slabs) {
+      if (income <= 0) return 0;
+      let tax = 0, prev = 0;
+      for (const s of slabs) {
+        if (income <= prev) break;
+        tax += (Math.min(income, s.upTo) - prev) * s.rate;
+        prev = s.upTo;
+      }
+      return Math.round(tax);
+    }
+
+    function calcRegime(regime) {
+      const gross = data.salary17_1 + data.perquisites17_2 + data.profitsInLieu17_3;
+      const c80C = Math.min(data.section80C, 150000);
+      const c80CCD1B = Math.min(data.section80CCD1B, 50000);
+      const c80CCD2 = Math.max(0, data.section80CCD2);
+
+      let taxable, exemptions = 0, std = 0, ch6a = 0, hp = 0;
+
+      if (regime === "new") {
+        std = 75000;
+        ch6a = c80CCD2;
+        taxable = gross - std - data.professionalTax + data.otherIncome - ch6a;
+      } else {
+        exemptions = data.hraExemption + data.ltaExemption + data.otherExemptions10;
+        std = 50000;
+        ch6a = c80C + c80CCD1B + data.section80D + data.section80E + data.section80G + c80CCD2;
+        hp = data.housePropertyLoss;
+        taxable = gross - exemptions - std - data.professionalTax + data.otherIncome + hp - ch6a;
+      }
+
+      taxable = Math.max(0, taxable);
+      const slabs = regime === "new"
+        ? [{upTo:4e5,r:0},{upTo:8e5,r:.05},{upTo:12e5,r:.1},{upTo:16e5,r:.15},{upTo:20e5,r:.2},{upTo:24e5,r:.25},{upTo:Infinity,r:.3}]
+        : [{upTo:2.5e5,r:0},{upTo:5e5,r:.05},{upTo:10e5,r:.2},{upTo:Infinity,r:.3}];
+
+      const taxBefore = slabTax(taxable, slabs.map(s => ({ upTo: s.upTo, rate: s.r })));
+      let rebate = 0;
+      if (regime === "new" && taxable <= 12e5) rebate = Math.min(taxBefore, 60000);
+      if (regime === "old" && taxable <= 5e5) rebate = Math.min(taxBefore, 12500);
+      const afterRebate = Math.max(0, taxBefore - rebate);
+      const cess = Math.round(afterRebate * 0.04);
+      const totalTax = afterRebate + cess;
+      const tds = Math.max(0, data.totalTds);
+      return { regime, gross, exemptions, std, ch6a, hp, taxable, taxBefore, rebate, cess, totalTax, tds,
+        balance: Math.max(0, totalTax - tds), refund: Math.max(0, tds - totalTax) };
+    }
+
+    function showResults() {
+      const n = calcRegime("new"), o = calcRegime("old");
+      let rec = "equal", save = 0;
+      if (n.totalTax < o.totalTax) { rec = "new"; save = o.totalTax - n.totalTax; }
+      else if (o.totalTax < n.totalTax) { rec = "old"; save = n.totalTax - o.totalTax; }
+
+      function card(r) {
+        const best = rec === r.regime;
+        return `<div class="card regime ${best ? "best" : ""}">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>${r.regime === "new" ? "New Tax Regime" : "Old Tax Regime"}</h3>
+            ${best ? '<span class="badge">Recommended</span>' : ""}
+          </div>
+          <div class="row"><span>Taxable income</span><strong>${fmt(r.taxable)}</strong></div>
+          <div class="row"><span>Tax before rebate</span><span>${fmt(r.taxBefore)}</span></div>
+          ${r.rebate ? `<div class="row"><span>Rebate u/s 87A</span><span>- ${fmt(r.rebate)}</span></div>` : ""}
+          <div class="row"><span>Cess (4%)</span><span>${fmt(r.cess)}</span></div>
+          <div class="row"><span><strong>Total tax</strong></span><strong>${fmt(r.totalTax)}</strong></div>
+          <div class="row"><span>TDS deducted</span><span>${fmt(r.tds)}</span></div>
+          <div class="row"><span><strong>${r.refund ? "Refund" : "Balance tax"}</strong></span><strong>${fmt(r.refund || r.balance)}</strong></div>
+        </div>`;
+      }
+
+      document.getElementById("results").innerHTML = `
+        <div class="card banner">
+          <h2>Tax comparison</h2>
+          <p>${rec === "equal" ? "Both regimes give the same tax." : `You save ${fmt(save)} with the ${rec} regime.`}</p>
+          <div class="stats">
+            <div class="stat"><div>New regime</div><div style="font-size:1.5rem;font-weight:700;">${fmt(n.totalTax)}</div></div>
+            <div class="stat"><div>Old regime</div><div style="font-size:1.5rem;font-weight:700;">${fmt(o.totalTax)}</div></div>
+          </div>
+        </div>
+        <div class="compare">${card(n)}${card(o)}</div>`;
+    }
+
+    function parseAmount(raw) {
+      const v = parseFloat(String(raw).replace(/[,₹\s]/g, ""));
+      return Number.isFinite(v) ? v : 0;
+    }
+
+    function extract(text, patterns) {
+      for (const p of patterns) {
+        const m = text.match(p);
+        if (m?.[1]) return parseAmount(m[1]);
+      }
+      return 0;
+    }
+
+    function parseForm16Text(text) {
+      const t = text.replace(/\s+/g, " ");
+      return {
+        salary17_1: extract(t, [/17\s*\(\s*1\s*\)[^0-9₹]*([\d,]+)/i, /Gross\s+Salary[^0-9₹]*([\d,]+)/i]),
+        perquisites17_2: extract(t, [/17\s*\(\s*2\s*\)[^0-9₹]*([\d,]+)/i]),
+        profitsInLieu17_3: extract(t, [/17\s*\(\s*3\s*\)[^0-9₹]*([\d,]+)/i]),
+        hraExemption: extract(t, [/HRA[^0-9₹]*([\d,]+)/i]),
+        ltaExemption: extract(t, [/LTA[^0-9₹]*([\d,]+)/i]),
+        otherExemptions10: extract(t, [/exempt u\/s\s*10[^0-9₹]*([\d,]+)/i]),
+        professionalTax: extract(t, [/Professional [Tt]ax[^0-9₹]*([\d,]+)/i]),
+        section80C: extract(t, [/80C[^0-9₹]*([\d,]+)/i]),
+        section80CCD1B: extract(t, [/80CCD\s*\(\s*1B\s*\)[^0-9₹]*([\d,]+)/i]),
+        section80D: extract(t, [/80D[^0-9₹]*([\d,]+)/i]),
+        section80E: extract(t, [/80E[^0-9₹]*([\d,]+)/i]),
+        section80G: extract(t, [/80G[^0-9₹]*([\d,]+)/i]),
+        section80CCD2: extract(t, [/80CCD\s*\(\s*2\s*\)[^0-9₹]*([\d,]+)/i]),
+        otherIncome: extract(t, [/other sources[^0-9₹]*([\d,]+)/i]),
+        housePropertyLoss: -Math.abs(extract(t, [/house property[^0-9₹]*([\d,]+)/i])),
+        totalTds: extract(t, [/tax\s+deducted[^0-9₹]*([\d,]+)/i]),
+      };
+    }
+
+    async function extractPdfText(file) {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      let text = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map(it => it.str).join(" ") + "\n";
+      }
+      return text;
+    }
+
+    document.getElementById("pdfInput").addEventListener("change", async (e) => {
+      const msg = document.getElementById("uploadMsg");
+      msg.innerHTML = "";
+      const files = [...(e.target.files || [])];
+      if (!files.length) return;
+      try {
+        let merged = {};
+        for (const f of files) Object.assign(merged, parseForm16Text(await extractPdfText(f)));
+        let found = false;
+        for (const k of Object.keys(merged)) {
+          if (merged[k]) { data[k] = merged[k]; found = true; }
+        }
+        if (!found) throw new Error("Could not extract values. Enter manually.");
+        renderForm();
+        msg.innerHTML = `<div class="ok">Parsed ${files.length} file(s). Review values below.</div>`;
+      } catch (err) {
+        msg.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    });
+
+    document.getElementById("calcBtn").addEventListener("click", () => {
+      if (!(data.salary17_1 || data.perquisites17_2 || data.profitsInLieu17_3)) {
+        alert("Enter at least gross salary (17(1)) to calculate.");
+        return;
+      }
+      showResults();
+    });
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      for (const k of Object.keys(data)) data[k] = 0;
+      document.getElementById("results").innerHTML = "";
+      document.getElementById("uploadMsg").innerHTML = "";
+      renderForm();
+    });
+
+    renderForm();
+  </script>
+</body>
+</html>

@@ -23,18 +23,26 @@ interface PdfDocument {
 }
 
 interface PdfPage {
-  getTextContent: () => Promise<{ items: PdfTextItem[] }>;
+  getTextContent: (params?: Record<string, unknown>) => Promise<{ items: PdfTextItem[] }>;
 }
 
 interface PdfTextItem {
   str?: string;
   transform?: number[];
+  hasEOL?: boolean;
 }
 
 declare global {
   interface Window {
     pdfjsLib?: PdfJsLib;
   }
+}
+
+export interface PdfExtractResult {
+  lines: string[];
+  rawText: string;
+  pageCount: number;
+  textItemCount: number;
 }
 
 function isMobileBrowser(): boolean {
@@ -50,12 +58,12 @@ async function loadPdfJsFromCdn(): Promise<PdfJsLib> {
   }
 
   await new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector(`script[data-pdfjs-cdn]`);
+    const existing = document.querySelector("script[data-pdfjs-cdn]");
     if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () =>
-        reject(new Error("PDF.js CDN script failed")),
-      );
+      const check = () =>
+        window.pdfjsLib?.getDocument ? resolve() : reject(new Error("PDF.js CDN unavailable"));
+      existing.addEventListener("load", () => setTimeout(check, 50));
+      if (window.pdfjsLib?.getDocument) resolve();
       return;
     }
 
@@ -63,17 +71,18 @@ async function loadPdfJsFromCdn(): Promise<PdfJsLib> {
     script.src = `${PDFJS_CDN_BASE}/pdf.min.js`;
     script.async = true;
     script.dataset.pdfjsCdn = "true";
-    script.onload = () => resolve();
+    script.onload = () => {
+      setTimeout(() => {
+        if (window.pdfjsLib?.getDocument) resolve();
+        else reject(new Error("PDF.js CDN loaded but library missing."));
+      }, 50);
+    };
     script.onerror = () =>
       reject(new Error("Could not load PDF library on this device."));
     document.head.appendChild(script);
   });
 
-  const lib = window.pdfjsLib;
-  if (!lib?.getDocument) {
-    throw new Error("PDF.js loaded but getDocument is unavailable.");
-  }
-
+  const lib = window.pdfjsLib!;
   lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
   return lib;
 }
@@ -95,7 +104,6 @@ async function getPdfJs(): Promise<PdfJsLib> {
     throw new Error("PDF parsing is only available in the browser.");
   }
 
-  // Mobile Safari handles the CDN script + .js worker more reliably than bundled .mjs
   if (isMobileBrowser()) {
     try {
       return await loadPdfJsFromCdn();
@@ -123,25 +131,34 @@ async function openPdfDocument(
       disableWorker,
       useWorkerFetch: false,
       isEvalSupported: false,
+      verbosity: 0,
     }).promise;
 
-  try {
-    return await tryOpen(false);
-  } catch (workerError) {
+  // Mobile: main-thread parsing often extracts text more reliably
+  if (isMobileBrowser()) {
     try {
       return await tryOpen(true);
     } catch {
-      const msg =
-        workerError instanceof Error ? workerError.message : "Unknown error";
-      throw new Error(`Could not read PDF (${msg}). Try manual entry.`);
+      return tryOpen(false);
     }
   }
+
+  try {
+    return await tryOpen(false);
+  } catch {
+    return tryOpen(true);
+  }
+}
+
+function getItemText(item: PdfTextItem): string {
+  if (typeof item.str === "string") return item.str;
+  return "";
 }
 
 function groupIntoLines(items: PositionedText[]): string[] {
   if (items.length === 0) return [];
 
-  const rowTolerance = 3;
+  const rowTolerance = 4;
   const rows = new Map<number, PositionedText[]>();
 
   for (const item of items) {
@@ -164,54 +181,149 @@ function groupIntoLines(items: PositionedText[]): string[] {
     .filter(Boolean);
 }
 
-export async function extractLinesFromPdf(file: File): Promise<string[]> {
+function joinItemsFlat(items: PdfTextItem[]): string {
+  const parts: string[] = [];
+  for (const item of items) {
+    const str = getItemText(item);
+    if (!str) continue;
+    parts.push(str);
+    if (item.hasEOL) parts.push("\n");
+    else parts.push(" ");
+  }
+  return parts.join("").replace(/\s+/g, " ").trim();
+}
+
+/** Split one long mobile PDF string into pseudo-lines for the parser */
+function splitFlatIntoLines(flat: string): string[] {
+  const markers = [
+    "17(1)",
+    "17 (1)",
+    "17(2)",
+    "17 (2)",
+    "17(3)",
+    "Gross Salary",
+    "Section 10",
+    "Section 16",
+    "Chapter VI",
+    "80C",
+    "80CCD",
+    "80D",
+    "80G",
+    "Professional Tax",
+    "House Rent",
+    "tax deducted",
+    "TDS",
+    "Form 16",
+  ];
+
+  let text = flat;
+  for (const marker of markers) {
+    text = text.replace(new RegExp(`(${marker})`, "gi"), "\n$1");
+  }
+
+  return text
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+async function extractPageContent(pdf: PdfDocument, pageNum: number) {
+  const page = await pdf.getPage(pageNum);
+  const content = await page.getTextContent({
+    normalizeWhitespace: true,
+    disableCombineTextItems: false,
+  });
+  return content.items;
+}
+
+export async function extractTextFromPdf(file: File): Promise<PdfExtractResult> {
   const pdfjs = await getPdfJs();
   const buffer = await file.arrayBuffer();
+
+  if (buffer.byteLength === 0) {
+    throw new Error("The selected file is empty.");
+  }
+
   const pdf = await openPdfDocument(pdfjs, buffer);
-  const allLines: string[] = [];
+  const positionedLines: string[] = [];
+  const flatParts: string[] = [];
+  let textItemCount = 0;
 
   for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const positioned: PositionedText[] = [];
+    const items = await extractPageContent(pdf, i);
+    textItemCount += items.length;
 
-    for (const item of content.items) {
-      const str = item.str ?? "";
+    const flatPage = joinItemsFlat(items);
+    if (flatPage) flatParts.push(flatPage);
+
+    const positioned: PositionedText[] = [];
+    for (const item of items) {
+      const str = getItemText(item);
       if (!str.trim()) continue;
       const transform = item.transform;
-      if (!transform || transform.length < 6) continue;
       positioned.push({
         str,
-        x: transform[4] ?? 0,
-        y: transform[5] ?? 0,
+        x: transform && transform.length >= 5 ? (transform[4] ?? 0) : 0,
+        y: transform && transform.length >= 6 ? (transform[5] ?? 0) : 0,
       });
     }
 
-    allLines.push(...groupIntoLines(positioned));
+    positionedLines.push(...groupIntoLines(positioned));
   }
 
-  return allLines;
+  const rawText = flatParts.join("\n");
+  let lines = positionedLines.filter(Boolean);
+
+  if (lines.length === 0 && rawText) {
+    lines = splitFlatIntoLines(rawText);
+  }
+
+  if (lines.length === 0 && rawText) {
+    lines = [rawText];
+  }
+
+  return {
+    lines,
+    rawText,
+    pageCount: pdf.numPages,
+    textItemCount,
+  };
+}
+
+export async function extractLinesFromPdf(file: File): Promise<string[]> {
+  const result = await extractTextFromPdf(file);
+  return result.lines;
 }
 
 export async function parseForm16Pdf(file: File): Promise<{
   data: Partial<Form16Data>;
   matchedFields: string[];
   lineCount: number;
+  charCount: number;
+  pageCount: number;
 }> {
-  const lines = await extractLinesFromPdf(file);
-  const text = lines.join("\n");
+  const extracted = await extractTextFromPdf(file);
+  const text = extracted.lines.join("\n") || extracted.rawText;
 
   if (!text.trim()) {
+    if (extracted.pageCount > 0 && extracted.textItemCount === 0) {
+      throw new Error(
+        "This PDF appears to be a scanned image with no readable text. Please use Manual entry, or ask your employer for a text-based Form 16 PDF.",
+      );
+    }
     throw new Error(
-      "This PDF has no readable text. It may be a scanned image — use manual entry instead.",
+      "Could not read any text from this PDF on your device. Please use Manual entry below.",
     );
   }
 
   const result = parseForm16Text(text);
+
   return {
     data: result.data,
     matchedFields: result.matchedFields,
-    lineCount: lines.length,
+    lineCount: extracted.lines.length,
+    charCount: text.length,
+    pageCount: extracted.pageCount,
   };
 }
 

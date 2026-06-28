@@ -41,6 +41,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       const merged: Partial<Form16Data> = {};
       const allMatched = new Set<string>();
       let totalLines = 0;
+      let totalChars = 0;
       const names: string[] = [];
 
       for (const file of Array.from(files)) {
@@ -53,13 +54,19 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         Object.assign(merged, parsed.data);
         parsed.matchedFields.forEach((f) => allMatched.add(f));
         totalLines += parsed.lineCount;
+        totalChars += parsed.charCount;
         names.push(file.name);
       }
 
       const matchedCount = Object.values(merged).filter((v) => v !== 0).length;
       if (matchedCount === 0) {
+        if (totalChars === 0) {
+          throw new Error(
+            "Could not read text from this PDF on your phone. It may be a scanned image — use Manual entry, or open the PDF on desktop and re-save as PDF (not photo).",
+          );
+        }
         throw new Error(
-          `Read ${totalLines} lines from PDF but couldn't match Form 16 fields. Please enter values manually — your employer's PDF layout may differ.`,
+          `Read ${totalChars.toLocaleString("en-IN")} characters (${totalLines} lines) but couldn't match Form 16 fields. Use Manual entry or the quick input fields below.`,
         );
       }
 

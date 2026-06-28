@@ -72,6 +72,47 @@ function extractFromLines(
   return 0;
 }
 
+function extractFromFlat(
+  flat: string,
+  labelPatterns: RegExp[],
+  options?: { pick?: "last" | "max"; exclude?: RegExp[] },
+): number {
+  const pick = options?.pick ?? "last";
+  const exclude = options?.exclude ?? [];
+
+  for (const label of labelPatterns) {
+    if (exclude.some((e) => e.test(flat) && label.test(flat))) continue;
+
+    const pattern = new RegExp(
+      `${label.source}[\\s\\S]{0,200}?(?:Rs\\.?|₹|INR)?\\s*(-?[\\d,]+(?:\\.\\d+)?)`,
+      label.flags.includes("i") ? "i" : "",
+    );
+    const matches = [...flat.matchAll(new RegExp(pattern.source, pattern.flags + "g"))];
+    if (matches.length === 0) continue;
+
+    const amounts = matches
+      .map((m) => (m[1] ? parseAmount(m[1]) : 0))
+      .filter((n) => n !== 0);
+
+    if (amounts.length > 0) {
+      return pick === "max" ? Math.max(...amounts) : amounts[amounts.length - 1];
+    }
+  }
+
+  return 0;
+}
+
+function extractField(
+  lines: string[],
+  flat: string,
+  labelPatterns: RegExp[],
+  options?: { pick?: "last" | "max"; exclude?: RegExp[] },
+): number {
+  const fromLines = extractFromLines(lines, labelPatterns, options);
+  if (fromLines !== 0) return fromLines;
+  return extractFromFlat(flat, labelPatterns, options);
+}
+
 function normalizeLines(text: string): string[] {
   return text
     .replace(/\r\n/g, "\n")
@@ -96,7 +137,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "salary17_1",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /17\s*\(\s*1\s*\)/i,
       /salary as per provisions contained in section 17\s*\(\s*1\s*\)/i,
       /salary as per provisions contained in sec\.?\s*17\s*\(\s*1\s*\)/i,
@@ -108,7 +149,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "perquisites17_2",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /17\s*\(\s*2\s*\)/i,
       /value of perquisites under section 17\s*\(\s*2\s*\)/i,
       /perquisites under section 17\s*\(\s*2\s*\)/i,
@@ -120,7 +161,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "profitsInLieu17_3",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /17\s*\(\s*3\s*\)/i,
       /profits in lieu of salary under section 17\s*\(\s*3\s*\)/i,
       /\(c\)\s*profits in lieu/i,
@@ -130,7 +171,7 @@ export function parseForm16Text(text: string): ParseResult {
   );
 
   if (!parsed.salary17_1) {
-    const gross = extractFromLines(lines, [
+    const gross = extractField(lines, flat, [
       /^1\.?\s*gross salary/i,
       /gross salary\s*\(?1\)?/i,
       /total gross salary/i,
@@ -140,7 +181,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "hraExemption",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /10\s*\(\s*13A\s*\)/i,
       /house rent allowance/i,
       /hra exemption/i,
@@ -152,7 +193,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "ltaExemption",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /10\s*\(\s*5\s*\)/i,
       /leave travel/i,
       /lta/i,
@@ -163,7 +204,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "otherExemptions10",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /total amount of exemption claimed under section 10/i,
       /allowances to the extent exempt u\/s\s*10/i,
       /less:\s*allowances under section 10/i,
@@ -175,7 +216,7 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "professionalTax",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /16\s*\(\s*iii\s*\)/i,
       /tax on employment/i,
       /professional tax/i,
@@ -186,8 +227,9 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "section80C",
-    extractFromLines(
+    extractField(
       lines,
+      flat,
       [/80C/i, /80CCC/i, /deduction under chapter vi-a/i],
       { exclude: [/80CCD/i, /80D/i, /80E/i, /80G/i] },
     ),
@@ -197,42 +239,42 @@ export function parseForm16Text(text: string): ParseResult {
 
   record(
     "section80CCD1B",
-    extractFromLines(lines, [/80CCD\s*\(\s*1B\s*\)/i]),
+    extractField(lines, flat, [/80CCD\s*\(\s*1B\s*\)/i]),
     parsed,
     "section80CCD1B",
   );
 
   record(
     "section80D",
-    extractFromLines(lines, [/80D/i], { exclude: [/80CCD/i] }),
+    extractField(lines, flat, [/80D/i], { exclude: [/80CCD/i] }),
     parsed,
     "section80D",
   );
 
   record(
     "section80E",
-    extractFromLines(lines, [/80E/i]),
+    extractField(lines, flat, [/80E/i]),
     parsed,
     "section80E",
   );
 
   record(
     "section80G",
-    extractFromLines(lines, [/80G/i]),
+    extractField(lines, flat, [/80G/i]),
     parsed,
     "section80G",
   );
 
   record(
     "section80CCD2",
-    extractFromLines(lines, [/80CCD\s*\(\s*2\s*\)/i]),
+    extractField(lines, flat, [/80CCD\s*\(\s*2\s*\)/i]),
     parsed,
     "section80CCD2",
   );
 
   record(
     "otherIncome",
-    extractFromLines(lines, [
+    extractField(lines, flat, [
       /income from other sources/i,
       /any other income reported by employee/i,
       /add:\s*any other income/i,
@@ -241,7 +283,7 @@ export function parseForm16Text(text: string): ParseResult {
     "otherIncome",
   );
 
-  const hpLoss = extractFromLines(lines, [
+  const hpLoss = extractField(lines, flat, [
     /loss from house property/i,
     /interest payable on borrowed capital/i,
     /income \(or admissible loss\) from house property/i,
@@ -251,14 +293,14 @@ export function parseForm16Text(text: string): ParseResult {
     matchedFields.push("housePropertyLoss");
   }
 
-  const tdsFromLines = extractFromLines(lines, [
+  const tdsFromLines = extractField(lines, flat, [
     /total amount of tax deducted/i,
     /tax deducted and deposited/i,
     /total tax deducted/i,
     /aggregate amount of tax deducted/i,
   ], { pick: "max" });
 
-  const tdsFromFlat = extractFromLines([flat], [
+  const tdsFromFlat = extractFromFlat(flat, [
     /total amount of tax deducted/i,
     /tax deducted and deposited/i,
   ], { pick: "max" });

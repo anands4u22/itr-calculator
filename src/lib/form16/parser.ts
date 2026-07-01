@@ -1,10 +1,16 @@
 import type { Form16Data } from "../tax/types";
 import { EMPTY_FORM16 } from "../tax/types";
+import { normalizeForm16Text } from "./normalizeText";
 
 export interface ParseResult {
   data: Partial<Form16Data>;
   lines: string[];
   matchedFields: string[];
+}
+
+export interface ParseOptions {
+  /** When true, apply OCR normalization and salary heuristics. */
+  ocr?: boolean;
 }
 
 function parseAmount(raw: string): number {
@@ -84,7 +90,7 @@ function extractFromFlat(
     if (exclude.some((e) => e.test(flat) && label.test(flat))) continue;
 
     const pattern = new RegExp(
-      `${label.source}[\\s\\S]{0,200}?(?:Rs\\.?|₹|INR)?\\s*(-?[\\d,]+(?:\\.\\d+)?)`,
+      `${label.source}[\\s\\S]{0,500}?(?:Rs\\.?|₹|INR)?\\s*(-?[\\d,]+(?:\\.\\d+)?)`,
       label.flags.includes("i") ? "i" : "",
     );
     const matches = [...flat.matchAll(new RegExp(pattern.source, pattern.flags + "g"))];
@@ -121,8 +127,30 @@ function normalizeLines(text: string): string[] {
     .filter(Boolean);
 }
 
-export function parseForm16Text(text: string): ParseResult {
-  const lines = normalizeLines(text);
+/** OCR fallback: find salary-sized amounts near salary keywords or among largest values. */
+function extractSalaryHeuristic(flat: string): number {
+  const salaryLike = /gross|salary|17\s*\(?\s*1|17\(1\)|u\/s\s*17/i;
+  if (!salaryLike.test(flat)) return 0;
+
+  const nearKeyword: number[] = [];
+  for (const m of flat.matchAll(
+    /(?:gross|salary|17\s*\(?\s*1|17\(1\)|provisions contained in section 17)[\s\S]{0,400}?([\d,]{5,})/gi,
+  )) {
+    const n = parseAmount(m[1] ?? "");
+    if (n >= 50000 && n <= 50_000_000) nearKeyword.push(n);
+  }
+  if (nearKeyword.length > 0) return Math.max(...nearKeyword);
+
+  const all = [...flat.matchAll(/\d[\d,]{4,}/g)]
+    .map((m) => parseAmount(m[0]))
+    .filter((n) => n >= 100_000 && n <= 50_000_000);
+  if (all.length === 0) return 0;
+  return Math.max(...all);
+}
+
+export function parseForm16Text(text: string, options?: ParseOptions): ParseResult {
+  const normalized = options?.ocr ? normalizeForm16Text(text) : text;
+  const lines = normalizeLines(normalized);
   const flat = lines.join(" ");
   const matchedFields: string[] = [];
 
@@ -175,8 +203,16 @@ export function parseForm16Text(text: string): ParseResult {
       /^1\.?\s*gross salary/i,
       /gross salary\s*\(?1\)?/i,
       /total gross salary/i,
+      /salary as per provisions/i,
     ], { pick: "max" });
     if (gross) record("salary17_1 (gross fallback)", gross, parsed, "salary17_1");
+  }
+
+  if (!parsed.salary17_1 && options?.ocr) {
+    const heuristic = extractSalaryHeuristic(flat);
+    if (heuristic) {
+      record("salary17_1 (OCR heuristic)", heuristic, parsed, "salary17_1");
+    }
   }
 
   record(

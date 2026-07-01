@@ -52,10 +52,12 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
         names.push(file.name);
       }
 
-      const matchedCount = Object.values(merged).filter((v) => v !== 0).length;
-      if (matchedCount === 0 && totalChars > 0) {
+      const matchedCount = allMatched.size;
+      if (matchedCount === 0) {
         throw new Error(
-          `Read ${totalChars.toLocaleString("en-IN")} characters (${totalLines} lines) but couldn't match Form 16 fields. Use Manual entry or the quick input fields below.`,
+          totalChars > 0
+            ? `Read ${totalChars.toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below.`
+            : "Couldn't match any Form 16 fields. Enter your annual gross salary in Manual entry below.",
         );
       }
 

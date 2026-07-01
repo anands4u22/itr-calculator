@@ -314,7 +314,7 @@ export async function parseForm16Pdf(
     );
   }
 
-  const result = parseForm16Text(text);
+  const result = parseForm16Text(text, { ocr: extracted.usedOcr });
   return {
     data: result.data,
     matchedFields: result.matchedFields,

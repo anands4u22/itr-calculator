@@ -59,7 +59,7 @@ export async function ocrPdfDocument(
   onProgress?: OcrProgress,
 ): Promise<string> {
   const maxPages = Math.min(pdf.numPages, 4);
-  const scale = isMobileBrowser() ? 1.5 : 2.5;
+  const scale = isMobileBrowser() ? 2 : 2.5;
   const parts: string[] = [];
 
   onProgress?.("Scanning PDF with OCR…");

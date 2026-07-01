@@ -10,6 +10,10 @@
 
 # testing
 /coverage
+/tests/output/*
+!/tests/output/.gitkeep
+/test-results/
+/playwright-report/
 
 # next.js
 /.next/

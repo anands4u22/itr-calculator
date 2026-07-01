@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Form16Data } from "@/lib/tax/types";
 import { formatErrorForDisplay, isDebugMode } from "@/lib/utils/debug";
+import { clearParseLogs, getParseLogs, parseLog } from "@/lib/form16/parseLog";
 
 interface Form16UploadProps {
   onParsed: (
@@ -27,6 +28,7 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
     setProgress("Starting…");
     setError(null);
     setWarning(null);
+    clearParseLogs();
 
     try {
       const { parseForm16Pdf, isPdfFile } = await import("@/lib/form16/pdf");
@@ -37,27 +39,54 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       let usedOcr = false;
       const names: string[] = [];
 
+      let textPreview = "";
+
       for (const file of Array.from(files)) {
         if (!isPdfFile(file)) {
           throw new Error(
             `"${file.name}" does not look like a PDF. On mobile, ensure the file ends with .pdf`,
           );
         }
+        parseLog("upload", "File selected", {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+        });
         const parsed = await parseForm16Pdf(file, setProgress);
         Object.assign(merged, parsed.data);
         parsed.matchedFields.forEach((f) => allMatched.add(f));
-        totalLines += parsed.lineCount;
-        totalChars += parsed.charCount;
+        totalLines += parsed.lineCount ?? 0;
+        totalChars += parsed.charCount ?? 0;
+        if (parsed.textPreview) textPreview = parsed.textPreview;
         if (parsed.usedOcr) usedOcr = true;
         names.push(file.name);
       }
 
       const matchedCount = allMatched.size;
       if (matchedCount === 0) {
+        const logs = getParseLogs();
+        parseLog("upload-fail", "No fields matched after upload", {
+          totalChars,
+          matchedCount,
+          logsCount: logs.length,
+        });
+        const done = logs.find((e) => e.stage === "done");
+        const charFromLogs =
+          (done?.data as { charCount?: number } | undefined)?.charCount ?? totalChars;
+        const preview =
+          textPreview ||
+          (logs.find((e) => e.stage === "post-ocr")?.data as { preview?: string })
+            ?.preview ||
+          (logs.find((e) => e.stage === "text-layer")?.data as { preview?: string })
+            ?.preview ||
+          "";
+        const logSummary = debug
+          ? `\n\n--- parse logs ---\n${JSON.stringify(logs, null, 2)}`
+          : preview
+            ? `\n\n--- text preview ---\n${preview.slice(0, 300)}…`
+            : "";
         throw new Error(
-          totalChars > 0
-            ? `Read ${totalChars.toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below.`
-            : "Couldn't match any Form 16 fields. Enter your annual gross salary in Manual entry below.",
+          `Read ${Math.max(charFromLogs, totalChars, 0).toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below (Part B has salary; Part A is TDS only).${logSummary}`,
         );
       }
 

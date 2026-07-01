@@ -1,16 +1,12 @@
 import type { Form16Data } from "../tax/types";
 import { EMPTY_FORM16 } from "../tax/types";
 import { normalizeForm16Text } from "./normalizeText";
+import { parseLog } from "./parseLog";
 
 export interface ParseResult {
   data: Partial<Form16Data>;
   lines: string[];
   matchedFields: string[];
-}
-
-export interface ParseOptions {
-  /** When true, apply OCR normalization and salary heuristics. */
-  ocr?: boolean;
 }
 
 function parseAmount(raw: string): number {
@@ -127,29 +123,54 @@ function normalizeLines(text: string): string[] {
     .filter(Boolean);
 }
 
-/** OCR fallback: find salary-sized amounts near salary keywords or among largest values. */
-function extractSalaryHeuristic(flat: string): number {
-  const salaryLike = /gross|salary|17\s*\(?\s*1|17\(1\)|u\/s\s*17/i;
-  if (!salaryLike.test(flat)) return 0;
+/** OCR fallback: find salary-sized amounts in Form 16 text. */
+function extractSalaryHeuristic(flat: string, aggressive = false): number {
+  const formContext =
+    /form\s*16|part\s*[ab]|certificate|assessment|tds|deduct|employer|employee|17|gross|salary/i;
+  if (!aggressive && !formContext.test(flat)) return 0;
 
   const nearKeyword: number[] = [];
   for (const m of flat.matchAll(
-    /(?:gross|salary|17\s*\(?\s*1|17\(1\)|provisions contained in section 17)[\s\S]{0,400}?([\d,]{5,})/gi,
+    /(?:gross|salary|17\s*\(?\s*1|17\(1\)|provisions contained in section 17|total amount of salary)[\s\S]{0,500}?([\d,]{4,})/gi,
   )) {
     const n = parseAmount(m[1] ?? "");
-    if (n >= 50000 && n <= 50_000_000) nearKeyword.push(n);
+    if (n >= 50_000 && n <= 50_000_000) nearKeyword.push(n);
   }
   if (nearKeyword.length > 0) return Math.max(...nearKeyword);
 
-  const all = [...flat.matchAll(/\d[\d,]{4,}/g)]
-    .map((m) => parseAmount(m[0]))
-    .filter((n) => n >= 100_000 && n <= 50_000_000);
-  if (all.length === 0) return 0;
+  const all = [...flat.matchAll(/(?:Rs\.?|₹|INR|\b)\s*([\d,]{5,})/gi)]
+    .map((m) => parseAmount(m[1] ?? ""))
+    .filter((n) => n >= 50_000 && n <= 50_000_000);
+
+  if (all.length === 0) {
+    const loose = [...flat.matchAll(/\d[\d,]{4,}/g)]
+      .map((m) => parseAmount(m[0]))
+      .filter((n) => n >= 50_000 && n <= 50_000_000);
+    if (loose.length === 0) return 0;
+    return Math.max(...loose);
+  }
+
   return Math.max(...all);
 }
 
-export function parseForm16Text(text: string, options?: ParseOptions): ParseResult {
-  const normalized = options?.ocr ? normalizeForm16Text(text) : text;
+/** Part A TDS certificate — tax deducted under section 192/203 */
+function extractTdsHeuristic(flat: string): number {
+  if (!/tax|tds|deduct|192|203|certificate|part\s*a/i.test(flat)) return 0;
+
+  const nearKeyword: number[] = [];
+  for (const m of flat.matchAll(
+    /(?:tax deducted|tds|deducted and deposited|section\s*192|section\s*203|total\s*tax)[\s\S]{0,400}?([\d,]{3,})/gi,
+  )) {
+    const n = parseAmount(m[1] ?? "");
+    if (n >= 1_000 && n <= 10_000_000) nearKeyword.push(n);
+  }
+  if (nearKeyword.length > 0) return Math.max(...nearKeyword);
+
+  return 0;
+}
+
+export function parseForm16Text(text: string, fileName?: string): ParseResult {
+  const normalized = normalizeForm16Text(text);
   const lines = normalizeLines(normalized);
   const flat = lines.join(" ");
   const matchedFields: string[] = [];
@@ -208,10 +229,11 @@ export function parseForm16Text(text: string, options?: ParseOptions): ParseResu
     if (gross) record("salary17_1 (gross fallback)", gross, parsed, "salary17_1");
   }
 
-  if (!parsed.salary17_1 && options?.ocr) {
-    const heuristic = extractSalaryHeuristic(flat);
+  if (!parsed.salary17_1) {
+    const heuristic = extractSalaryHeuristic(flat, matchedFields.length === 0);
     if (heuristic) {
-      record("salary17_1 (OCR heuristic)", heuristic, parsed, "salary17_1");
+      parseLog("heuristic", "Salary from heuristic", { amount: heuristic });
+      record("salary17_1 (heuristic)", heuristic, parsed, "salary17_1");
     }
   }
 
@@ -334,15 +356,40 @@ export function parseForm16Text(text: string, options?: ParseOptions): ParseResu
     /tax deducted and deposited/i,
     /total tax deducted/i,
     /aggregate amount of tax deducted/i,
+    /tax deducted.*section\s*192/i,
+    /amount of tax deducted/i,
+    /balance tax deduct/i,
+    /tax paid or deposited/i,
+    /certificate.*203/i,
+    /part\s*a/i,
   ], { pick: "max" });
 
   const tdsFromFlat = extractFromFlat(flat, [
     /total amount of tax deducted/i,
     /tax deducted and deposited/i,
+    /tax deducted.*section\s*192/i,
+    /aggregate amount of tax deducted/i,
   ], { pick: "max" });
 
-  const totalTds = Math.max(tdsFromLines, tdsFromFlat);
+  let totalTds = Math.max(tdsFromLines, tdsFromFlat);
+  if (!totalTds) {
+    totalTds = extractTdsHeuristic(flat);
+    if (totalTds) parseLog("heuristic", "TDS from heuristic", { amount: totalTds });
+  }
   if (totalTds) record("totalTds", totalTds, parsed, "totalTds");
+
+  const isPartA =
+    /part\s*-?\s*a/i.test(fileName ?? "") ||
+    (/part\s*a/i.test(flat) && !/17\s*\(\s*1\s*\)/i.test(flat) && !parsed.salary17_1);
+
+  if (isPartA && matchedFields.length === 0 && totalTds) {
+    parseLog("part-a", "Part A — matched TDS only", { totalTds });
+  }
+
+  parseLog("parser", "Field extraction finished", {
+    matchedFields,
+    data: parsed,
+  });
 
   return { data: parsed, lines, matchedFields };
 }

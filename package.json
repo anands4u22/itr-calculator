@@ -4,9 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/copy-pdf-worker.mjs && next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "playwright test",
+    "test:pdf": "node scripts/predeploy-pdf-test.mjs",
+    "test:pdf:all": "playwright test tests/e2e/form16-mobile.spec.ts",
+    "test:pdf:ui": "playwright test --ui --project=mobile-chrome",
+    "test:pdf:headed": "playwright test --headed --project=mobile-chrome tests/e2e/form16-direct.spec.ts",
+    "postinstall": "node scripts/copy-pdf-worker.mjs"
   },
   "dependencies": {
     "next": "15.5.19",
@@ -16,6 +22,7 @@
     "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4.1.8",
     "@types/node": "^22.15.21",
     "@types/react": "^19.1.6",

@@ -1,4 +1,5 @@
 import { parseForm16Text } from "@/lib/form16/parser";
+import { parseLog } from "@/lib/form16/parseLog";
 import type {
   PdfDocument,
   PdfJsLib,
@@ -10,7 +11,8 @@ import type { Form16Data } from "@/lib/tax/types";
 export type { PdfDocument, PdfPage } from "@/lib/form16/pdf-types";
 
 const PDFJS_VERSION = "4.8.69";
-const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
+/** Same-origin worker — copied to public/ by scripts/copy-pdf-worker.mjs */
+const PDFJS_WORKER_SRC = "/pdf.worker.min.mjs";
 
 interface PositionedText {
   str: string;
@@ -34,47 +36,16 @@ export interface PdfExtractResult {
 
 export type PdfProgressCallback = (message: string) => void;
 
-function isMobileBrowser(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry/i.test(
-    navigator.userAgent,
-  );
-}
-
 export function isPdfFile(file: File): boolean {
   if (file.type === "application/pdf") return true;
   return file.name.toLowerCase().endsWith(".pdf");
-}
-
-async function loadPdfJsFromCdn(): Promise<PdfJsLib> {
-  if (window.pdfjsLib?.getDocument) return window.pdfjsLib;
-
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = `${PDFJS_CDN_BASE}/pdf.min.js`;
-    script.async = true;
-    script.dataset.pdfjsCdn = "true";
-    script.onload = () => {
-      setTimeout(() => {
-        if (window.pdfjsLib?.getDocument) resolve();
-        else reject(new Error("PDF.js CDN loaded but library missing."));
-      }, 50);
-    };
-    script.onerror = () =>
-      reject(new Error("Could not load PDF library on this device."));
-    document.head.appendChild(script);
-  });
-
-  const lib = window.pdfjsLib as PdfJsLib;
-  lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
-  return lib;
 }
 
 async function loadPdfJsFromBundle(): Promise<PdfJsLib> {
   const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const lib = ((mod as { default?: unknown }).default ?? mod) as PdfJsLib;
   if (!lib?.getDocument) throw new Error("Bundled PDF.js missing getDocument.");
-  lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.js`;
+  lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_SRC;
   return lib;
 }
 
@@ -82,18 +53,8 @@ async function getPdfJs(): Promise<PdfJsLib> {
   if (typeof window === "undefined") {
     throw new Error("PDF parsing is only available in the browser.");
   }
-  if (isMobileBrowser()) {
-    try {
-      return await loadPdfJsFromCdn();
-    } catch {
-      return loadPdfJsFromBundle();
-    }
-  }
-  try {
-    return await loadPdfJsFromBundle();
-  } catch {
-    return loadPdfJsFromCdn();
-  }
+  parseLog("pdfjs", "Loading bundled PDF.js", { worker: PDFJS_WORKER_SRC });
+  return loadPdfJsFromBundle();
 }
 
 async function openPdfDocument(
@@ -101,26 +62,27 @@ async function openPdfDocument(
   buffer: ArrayBuffer,
 ): Promise<PdfDocument> {
   const data = new Uint8Array(buffer);
-  const tryOpen = (disableWorker: boolean) =>
-    pdfjs.getDocument({
+  /** Main-thread parsing — avoids CDN worker fetch (broken on mobile / Playwright) */
+  parseLog("pdf-open", "Opening PDF (disableWorker=true)");
+  try {
+    return await pdfjs.getDocument({
       data,
-      disableWorker,
+      disableWorker: true,
       useWorkerFetch: false,
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
-
-  if (isMobileBrowser()) {
-    try {
-      return await tryOpen(true);
-    } catch {
-      return tryOpen(false);
-    }
-  }
-  try {
-    return await tryOpen(false);
-  } catch {
-    return tryOpen(true);
+  } catch (err) {
+    parseLog("pdf-open", "Main-thread open failed, retrying with worker", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return pdfjs.getDocument({
+      data,
+      disableWorker: false,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      verbosity: 0,
+    }).promise;
   }
 }
 
@@ -184,11 +146,32 @@ function textFromRaw(rawText: string, lines: string[]): string {
 /** Scanned PDFs often have a junk metadata text layer — treat as empty. */
 function hasMeaningfulForm16Text(rawText: string, lines: string[]): boolean {
   const text = textFromRaw(rawText, lines).trim();
-  if (text.length < 20) return false;
+  if (text.length < 50) return false;
   const digits = text.replace(/\D/g, "");
-  if (digits.length < 6) return false;
-  return /form\s*16|certificate|17\s*[\(]?1|gross|salary|80\s*[cCdD]|tds|tax\s*deduct|assessment/i.test(
+  if (digits.length < 10) return false;
+  return /form\s*16|17\s*[\(\[]?\s*1|gross\s*salary|80\s*c|chapter\s*vi|assessment\s*year|tax\s*deduct|part\s*[ab]/i.test(
     text,
+  );
+}
+
+async function tryOcrExtract(
+  pdf: PdfDocument,
+  onProgress?: PdfProgressCallback,
+): Promise<PdfExtractResult> {
+  onProgress?.("Scanning PDF with OCR…");
+  parseLog("ocr", "Starting OCR", { pages: pdf.numPages });
+  const { ocrPdfDocument } = await import("@/lib/form16/ocr");
+  const ocrText = await ocrPdfDocument(pdf, onProgress);
+  parseLog("ocr", "OCR complete", {
+    charCount: ocrText.length,
+    preview: ocrText.slice(0, 200),
+  });
+  return buildExtractResult(
+    ocrText,
+    splitFlatIntoLines(ocrText),
+    pdf.numPages,
+    1,
+    true,
   );
 }
 
@@ -271,17 +254,8 @@ export async function extractTextFromPdf(
 
   const needsOcr = !hasMeaningfulForm16Text(result.rawText, result.lines);
   if (needsOcr) {
-    onProgress?.("No readable text — starting OCR…");
     try {
-      const { ocrPdfDocument } = await import("@/lib/form16/ocr");
-      const ocrText = await ocrPdfDocument(pdf, onProgress);
-      result = buildExtractResult(
-        ocrText,
-        splitFlatIntoLines(ocrText),
-        pdf.numPages,
-        1,
-        true,
-      );
+      result = await tryOcrExtract(pdf, onProgress);
     } catch (ocrErr) {
       const detail =
         ocrErr instanceof Error ? ocrErr.message : "OCR failed on this device.";
@@ -304,9 +278,78 @@ export async function parseForm16Pdf(
   charCount: number;
   pageCount: number;
   usedOcr: boolean;
+  textPreview?: string;
 }> {
-  const extracted = await extractTextFromPdf(file, onProgress);
-  const text = textFromRaw(extracted.rawText, extracted.lines);
+  parseLog("start", `Parsing ${file.name}`, {
+    size: file.size,
+    type: file.type,
+  });
+
+  const pdfjs = await getPdfJs();
+  const buffer = await file.arrayBuffer();
+  parseLog("file", "Read file buffer", {
+    fileName: file.name,
+    fileSize: file.size,
+    byteLength: buffer.byteLength,
+  });
+  if (buffer.byteLength === 0) {
+    throw new Error(
+      `File "${file.name}" is empty (0 bytes). Re-download the PDF and try again.`,
+    );
+  }
+
+  onProgress?.("Opening PDF…");
+  const pdf = await openPdfDocument(pdfjs, buffer);
+  parseLog("pdf-open", "PDF opened", { numPages: pdf.numPages });
+  let extracted = await extractTextFromPdfPages(pdf, onProgress);
+  let usedOcr = false;
+
+  let text = textFromRaw(extracted.rawText, extracted.lines);
+  let parsed = parseForm16Text(text, file.name);
+
+  parseLog("text-layer", "Extracted text layer", {
+    charCount: text.length,
+    lineCount: extracted.lines.length,
+    textItemCount: extracted.textItemCount,
+    meaningful: hasMeaningfulForm16Text(extracted.rawText, extracted.lines),
+    matchedFields: parsed.matchedFields,
+    preview: text.slice(0, 200),
+  });
+
+  const needsOcr =
+    !text.trim() ||
+    parsed.matchedFields.length === 0 ||
+    !hasMeaningfulForm16Text(extracted.rawText, extracted.lines);
+
+  if (needsOcr) {
+    parseLog("decision", "OCR required", {
+      emptyText: !text.trim(),
+      zeroMatches: parsed.matchedFields.length === 0,
+    });
+    try {
+      extracted = await tryOcrExtract(pdf, onProgress);
+      usedOcr = true;
+      text = textFromRaw(extracted.rawText, extracted.lines);
+      parsed = parseForm16Text(text, file.name);
+      parseLog("post-ocr", "Parsed after OCR", {
+        charCount: text.length,
+        matchedFields: parsed.matchedFields,
+        data: parsed.data,
+        preview: text.slice(0, 200),
+      });
+    } catch (ocrErr) {
+      parseLog("ocr-error", "OCR failed", {
+        error: ocrErr instanceof Error ? ocrErr.message : String(ocrErr),
+      });
+      if (!text.trim()) {
+        const detail =
+          ocrErr instanceof Error ? ocrErr.message : "OCR failed on this device.";
+        throw new Error(
+          `Could not read this PDF (scanned image). ${detail} Use Manual entry and enter your annual gross salary below.`,
+        );
+      }
+    }
+  }
 
   if (!text.trim()) {
     throw new Error(
@@ -314,13 +357,20 @@ export async function parseForm16Pdf(
     );
   }
 
-  const result = parseForm16Text(text, { ocr: extracted.usedOcr });
-  return {
-    data: result.data,
-    matchedFields: result.matchedFields,
-    lineCount: extracted.lines.length,
+  parseLog("done", "Parse complete", {
+    matchedFields: parsed.matchedFields,
+    data: parsed.data,
+    usedOcr,
     charCount: text.length,
+  });
+
+  return {
+    data: parsed.data,
+    matchedFields: parsed.matchedFields,
+    lineCount: extracted.lines.length,
+    charCount: Math.max(text.length, extracted.rawText.length),
     pageCount: extracted.pageCount,
-    usedOcr: extracted.usedOcr,
+    usedOcr,
+    textPreview: text.slice(0, 400) || extracted.rawText.slice(0, 400),
   };
 }

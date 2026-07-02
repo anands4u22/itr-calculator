@@ -1,4 +1,5 @@
 import { CalculatorApp } from "@/components/CalculatorApp";
+import { UsageGuide } from "@/components/UsageGuide";
 import { FY_LABEL } from "@/lib/tax/slabs";
 
 export default function HomePage() {
@@ -19,9 +20,15 @@ export default function HomePage() {
           </p>
         </header>
 
+        <UsageGuide />
+
         <CalculatorApp />
 
-        <footer className="mt-10 border-t border-slate-200 pt-6 text-sm text-slate-500">
+        <footer className="mt-10 space-y-3 border-t border-slate-200 pt-6 text-sm text-slate-500">
+          <p>
+            <strong className="text-slate-700">Privacy:</strong> This app does not store, upload,
+            or share any user data. All processing happens in your browser only.
+          </p>
           <p>
             This tool provides an estimate for salaried individuals based on Form
             16 data. It does not replace professional tax advice. Surcharge,

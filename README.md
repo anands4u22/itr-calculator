@@ -1,16 +1,28 @@
 # ITR Calculator
 
+**Live app:** [https://itr-calculator.vercel.app/](https://itr-calculator.vercel.app/)
+
 Compare income tax under the **new** and **old** tax regimes using Form 16 Part A and Part B for **FY 2025-26 (AY 2026-27)**.
 
-## Features
+## How to use
 
-- Upload Form 16 PDF (Part A + Part B)
-- Manual entry fallback
-- Side-by-side tax comparison
-- Shows taxable income, rebate, cess, TDS, refund / balance tax
-- Recommends the cheaper regime
+1. Open [itr-calculator.vercel.app](https://itr-calculator.vercel.app/) on desktop or mobile.
+2. **Upload** Form 16 Part B (salary) and optionally Part A (TDS).
+3. **Review** auto-filled salary and deductions; edit or enter manually if needed.
+4. Add optional NPS, HRA, 80C, or 80G if applicable.
+5. Click **Compare tax regimes** to see new vs old tax and the recommended regime.
 
-## Getting started
+**Tip:** Part B has gross salary; Part A is mainly TDS. Scanned PDFs are supported via OCR.
+
+## Privacy
+
+This app **does not store, upload, or share** any user data. PDFs and numbers are processed entirely in the browser and never sent to a server.
+
+## Disclaimer
+
+Estimates only — not tax advice. Surcharge, special incomes, and complex cases are not covered.
+
+## Local development
 
 ```bash
 npm install
@@ -18,10 +30,3 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
-
-## Notes
-
-- PDF parsing depends on employer-specific Form 16 formats — always review extracted values.
-- Old regime uses Section 10 exemptions and Chapter VI-A deductions.
-- New regime uses ₹75,000 standard deduction and allows employer NPS (80CCD(2)).
-- This is an estimate tool, not tax advice.

@@ -1,9 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { parseForm16Pdf, isPdfFile } from "@/lib/form16/pdf";
+import {
+  clearParseLogs,
+  formatParseLogSummary,
+  getParseLogs,
+  parseLog,
+} from "@/lib/form16/parseLog";
 import type { Form16Data } from "@/lib/tax/types";
 import { formatErrorForDisplay, isDebugMode } from "@/lib/utils/debug";
-import { clearParseLogs, getParseLogs, parseLog } from "@/lib/form16/parseLog";
 
 interface Form16UploadProps {
   onParsed: (
@@ -31,7 +37,6 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
     clearParseLogs();
 
     try {
-      const { parseForm16Pdf, isPdfFile } = await import("@/lib/form16/pdf");
       const merged: Partial<Form16Data> = {};
       const allMatched = new Set<string>();
       let totalLines = 0;
@@ -64,12 +69,11 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
 
       const matchedCount = allMatched.size;
       if (matchedCount === 0) {
-        const logs = getParseLogs();
         parseLog("upload-fail", "No fields matched after upload", {
           totalChars,
           matchedCount,
-          logsCount: logs.length,
         });
+        const logs = getParseLogs();
         const done = logs.find((e) => e.stage === "done");
         const charFromLogs =
           (done?.data as { charCount?: number } | undefined)?.charCount ?? totalChars;
@@ -82,11 +86,12 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
           "";
         const logSummary = debug
           ? `\n\n--- parse logs ---\n${JSON.stringify(logs, null, 2)}`
-          : preview
-            ? `\n\n--- text preview ---\n${preview.slice(0, 300)}…`
-            : "";
+          : `\n\n--- parse summary ---\n${formatParseLogSummary()}`;
+        const previewBlock = preview
+          ? `\n\n--- text preview ---\n${preview.slice(0, 300)}…`
+          : "";
         throw new Error(
-          `Read ${Math.max(charFromLogs, totalChars, 0).toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below (Part B has salary; Part A is TDS only).${logSummary}`,
+          `Read ${Math.max(charFromLogs, totalChars, 0).toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below (Part B has salary; Part A is TDS only).${previewBlock}${logSummary}`,
         );
       }
 

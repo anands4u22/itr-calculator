@@ -62,27 +62,28 @@ async function openPdfDocument(
   buffer: ArrayBuffer,
 ): Promise<PdfDocument> {
   const data = new Uint8Array(buffer);
-  /** Main-thread parsing — avoids CDN worker fetch (broken on mobile / Playwright) */
-  parseLog("pdf-open", "Opening PDF (disableWorker=true)");
+  /** Main-thread parsing — avoids worker fetch failures on mobile / Vercel */
+  parseLog("pdf-open", "Opening PDF (disableWorker=true)", {
+    bytes: data.byteLength,
+  });
   try {
-    return await pdfjs.getDocument({
+    const pdf = await pdfjs.getDocument({
       data,
       disableWorker: true,
       useWorkerFetch: false,
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
+    if (pdf.numPages < 1) {
+      throw new Error("PDF opened but has 0 pages.");
+    }
+    return pdf;
   } catch (err) {
-    parseLog("pdf-open", "Main-thread open failed, retrying with worker", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return pdfjs.getDocument({
-      data,
-      disableWorker: false,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      verbosity: 0,
-    }).promise;
+    const detail = err instanceof Error ? err.message : String(err);
+    parseLog("pdf-open", "Main-thread open failed", { error: detail });
+    throw new Error(
+      `Could not open PDF (${detail}). Re-download the file or use Manual entry below.`,
+    );
   }
 }
 
@@ -311,10 +312,21 @@ export async function parseForm16Pdf(
     charCount: text.length,
     lineCount: extracted.lines.length,
     textItemCount: extracted.textItemCount,
+    pageCount: extracted.pageCount,
     meaningful: hasMeaningfulForm16Text(extracted.rawText, extracted.lines),
     matchedFields: parsed.matchedFields,
     preview: text.slice(0, 200),
   });
+
+  if (
+    extracted.textItemCount === 0 &&
+    !text.trim() &&
+    extracted.pageCount > 0
+  ) {
+    parseLog("text-layer", "No text items from PDF.js text layer", {
+      pageCount: extracted.pageCount,
+    });
+  }
 
   const needsOcr =
     !text.trim() ||

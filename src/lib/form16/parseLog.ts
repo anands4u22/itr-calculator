@@ -7,9 +7,6 @@ export interface ParseLogEntry {
   data?: unknown;
 }
 
-/** SSR-only fallback when window is unavailable */
-const ssrLogs: ParseLogEntry[] = [];
-
 declare global {
   interface Window {
     __form16ParseLogs?: ParseLogEntry[];
@@ -19,16 +16,17 @@ declare global {
   }
 }
 
-function getStore(): ParseLogEntry[] {
-  if (typeof window === "undefined") return ssrLogs;
+function store(): ParseLogEntry[] {
+  if (typeof window === "undefined") return [];
   window.__form16ParseLogs ??= [];
   return window.__form16ParseLogs;
 }
 
 /** Structured parse pipeline logging — stored on window for tests + ?debug=1 console */
 export function parseLog(stage: string, detail: string, data?: unknown): void {
+  if (typeof window === "undefined") return;
   const entry: ParseLogEntry = { ts: Date.now(), stage, detail, data };
-  getStore().push(entry);
+  store().push(entry);
 
   if (isDebugMode()) {
     if (data !== undefined) {
@@ -40,9 +38,19 @@ export function parseLog(stage: string, detail: string, data?: unknown): void {
 }
 
 export function clearParseLogs(): void {
-  getStore().length = 0;
+  if (typeof window === "undefined") return;
+  window.__form16ParseLogs = [];
 }
 
 export function getParseLogs(): ParseLogEntry[] {
-  return [...getStore()];
+  return [...store()];
+}
+
+export function formatParseLogSummary(maxEntries = 12): string {
+  const logs = getParseLogs();
+  if (logs.length === 0) return "no parse logs recorded";
+  const tail = logs.slice(-maxEntries);
+  return tail
+    .map((e) => `${e.stage}: ${e.detail}${e.data ? ` ${JSON.stringify(e.data)}` : ""}`)
+    .join("\n");
 }

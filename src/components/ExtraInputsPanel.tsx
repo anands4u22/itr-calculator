@@ -3,7 +3,7 @@
 import { calculateHraExemption } from "@/lib/tax/hra";
 import type { QuickInputs } from "@/lib/tax/mergeInputs";
 import { MAX_80C, MAX_80CCD1B } from "@/lib/tax/slabs";
-import { CurrencyInput } from "@/components/ManualForm";
+import { CurrencyInput } from "@/components/CurrencyInput";
 import { formatINR } from "@/lib/utils";
 
 interface RegimeBadgeProps {
@@ -57,13 +57,15 @@ export function ExtraInputsPanel({
 
   return (
     <section className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
-      <div className="mb-4">
-        <h3 className="text-base font-semibold text-slate-900">
-          Enter salary &amp; deductions
+      <div className="mb-5 border-b border-slate-100 pb-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-indigo-600">
+          Step 2
+        </p>
+        <h3 className="mt-1 text-base font-semibold text-slate-900">
+          Salary &amp; deductions
         </h3>
         <p className="mt-1 text-sm text-slate-500">
-          Works without PDF upload — especially on mobile. Fill gross salary and
-          any deductions below, then compare regimes.
+          Review auto-filled values from PDF or enter manually, then compare regimes.
         </p>
       </div>
 

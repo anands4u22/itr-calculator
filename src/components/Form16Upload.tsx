@@ -17,9 +17,10 @@ interface Form16UploadProps {
     fileName: string,
     meta: { matchedFields: string[]; lineCount: number; usedOcr?: boolean },
   ) => void;
+  compact?: boolean;
 }
 
-export function Form16Upload({ onParsed }: Form16UploadProps) {
+export function Form16Upload({ onParsed, compact = false }: Form16UploadProps) {
   const debug = isDebugMode();
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -43,7 +44,6 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
       let totalChars = 0;
       let usedOcr = false;
       const names: string[] = [];
-
       let textPreview = "";
 
       for (const file of Array.from(files)) {
@@ -91,13 +91,13 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
           ? `\n\n--- text preview ---\n${preview.slice(0, 300)}…`
           : "";
         throw new Error(
-          `Read ${Math.max(charFromLogs, totalChars, 0).toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary in Manual entry below (Part B has salary; Part A is TDS only).${previewBlock}${logSummary}`,
+          `Read ${Math.max(charFromLogs, totalChars, 0).toLocaleString("en-IN")} characters from PDF but couldn't match Form 16 fields. Enter your annual gross salary below (Part B has salary; Part A is TDS only).${previewBlock}${logSummary}`,
         );
       }
 
       if (matchedCount < 3) {
         setWarning(
-          `Only ${matchedCount} field(s) detected (${[...allMatched].join(", ")}). Review and fill the rest below.`,
+          `Only ${matchedCount} field(s) detected (${[...allMatched].join(", ")}). Review values below.`,
         );
       }
 
@@ -124,19 +124,37 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
   };
 
   return (
-    <div className="rounded-2xl border border-dashed border-indigo-300 bg-indigo-50/40 p-6">
-      <div className="mx-auto max-w-xl text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-100 text-2xl">
-          📄
+    <section className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/80 to-white p-5 shadow-sm sm:p-6">
+      <div className={compact ? "flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between" : "mx-auto max-w-2xl text-center"}>
+        <div className={compact ? "min-w-0 flex-1" : undefined}>
+          <div className={`flex items-center gap-3 ${compact ? "" : "mx-auto mb-3 w-fit"}`}>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-xl">
+              📄
+            </div>
+            <div className={compact ? "text-left" : "text-left sm:text-center"}>
+              <h3 className="text-base font-semibold text-slate-900 sm:text-lg">
+                Step 1 — Upload Form 16
+              </h3>
+              <p className="mt-0.5 text-sm text-slate-600">
+                Part A (TDS) and/or Part B (salary). Scanned PDFs use OCR automatically.
+              </p>
+            </div>
+          </div>
         </div>
-        <h3 className="text-lg font-semibold text-slate-900">Upload Form 16 PDF</h3>
-        <p className="mt-2 text-sm text-slate-600">
-          Upload Part A and/or Part B (PDF). Scanned PDFs are read with OCR
-          automatically.
-        </p>
 
-        <label className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60">
-          {loading ? "Processing…" : "Choose PDF file(s)"}
+        <label
+          className={`inline-flex shrink-0 cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 ${
+            compact ? "" : "mt-4 w-full sm:w-auto"
+          }`}
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              Processing…
+            </span>
+          ) : (
+            "Choose PDF file(s)"
+          )}
           <input
             type="file"
             accept="application/pdf,.pdf"
@@ -149,42 +167,43 @@ export function Form16Upload({ onParsed }: Form16UploadProps) {
             }}
           />
         </label>
-
-        {progress ? (
-          <p className="mt-3 text-sm font-medium text-indigo-700">{progress}</p>
-        ) : null}
-
-        {fileNames.length > 0 ? (
-          <p className="mt-3 text-xs text-emerald-700">
-            Parsed: {fileNames.join(", ")}
-          </p>
-        ) : null}
-
-        {warning ? (
-          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {warning}
-          </p>
-        ) : null}
-
-        {error ? (
-          <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-left text-sm text-red-700">
-            <p className="font-semibold">Upload failed</p>
-            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-sans text-xs">
-              {error}
-            </pre>
-            <p className="mt-2 text-xs text-red-600">
-              On mobile, if upload keeps failing, use Manual entry below — all
-              fields work without PDF upload.
-            </p>
-          </div>
-        ) : null}
-
-        {debug ? (
-          <p className="mt-2 break-all text-xs text-slate-500">
-            Debug: {typeof navigator !== "undefined" ? navigator.userAgent : ""}
-          </p>
-        ) : null}
       </div>
-    </div>
+
+      {progress ? (
+        <p className={`mt-4 text-sm font-medium text-indigo-700 ${compact ? "" : "text-center"}`}>
+          {progress}
+        </p>
+      ) : null}
+
+      {fileNames.length > 0 ? (
+        <div className={`mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ${compact ? "" : "text-left"}`}>
+          <span className="font-medium">Parsed:</span> {fileNames.join(", ")}
+        </div>
+      ) : null}
+
+      {warning ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {warning}
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm text-red-800">
+          <p className="font-semibold">Upload failed</p>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words font-sans text-xs">
+            {error}
+          </pre>
+          <p className="mt-2 text-xs text-red-600">
+            You can still enter salary manually in Step 2 below.
+          </p>
+        </div>
+      ) : null}
+
+      {debug ? (
+        <p className="mt-3 break-all text-xs text-slate-400">
+          Debug UA: {typeof navigator !== "undefined" ? navigator.userAgent : ""}
+        </p>
+      ) : null}
+    </section>
   );
 }

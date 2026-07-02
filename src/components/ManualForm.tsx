@@ -1,43 +1,7 @@
 "use client";
 
+import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Form16Data } from "@/lib/tax/types";
-
-interface CurrencyInputProps {
-  label: string;
-  hint?: string;
-  value: number;
-  onChange: (value: number) => void;
-  allowNegative?: boolean;
-}
-
-export function CurrencyInput({
-  label,
-  hint,
-  value,
-  onChange,
-  allowNegative = false,
-}: CurrencyInputProps) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      {hint ? <span className="block text-xs text-slate-500">{hint}</span> : null}
-      <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
-          ₹
-        </span>
-        <input
-          type="number"
-          min={allowNegative ? undefined : 0}
-          step={1}
-          value={value || ""}
-          onChange={(e) => onChange(Number(e.target.value) || 0)}
-          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-8 pr-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          placeholder="0"
-        />
-      </div>
-    </label>
-  );
-}
 
 interface FormSectionProps {
   title: string;

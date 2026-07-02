@@ -11,6 +11,7 @@ import {
   applyQuickInputs,
   EMPTY_QUICK_INPUTS,
   getQuickInputSummary,
+  syncQuickInputsFromParse,
 } from "@/lib/tax/mergeInputs";
 import { FY_LABEL } from "@/lib/tax/slabs";
 import { isMobileDevice } from "@/lib/utils/device";
@@ -47,9 +48,7 @@ export function CalculatorApp() {
 
   useEffect(() => {
     setMounted(true);
-    const mobile = isMobileDevice();
-    setIsMobile(mobile);
-    if (mobile) setTab("manual");
+    setIsMobile(isMobileDevice());
   }, []);
 
   const effectiveFormData = useMemo(
@@ -76,14 +75,23 @@ export function CalculatorApp() {
   const handleParsed = (
     partial: Partial<Form16Data>,
     fileName: string,
-    meta: { matchedFields: string[]; lineCount: number },
+    meta: { matchedFields: string[]; lineCount: number; usedOcr?: boolean },
   ) => {
     setFormData((prev) => mergeForm16Data(prev, partial));
+    setQuickInputs((prev) => syncQuickInputsFromParse(prev, partial));
     setParsedFile(fileName);
+    const salary = partial.salary17_1 ?? 0;
+    const partBHint =
+      salary <= 0 && partial.totalTds
+        ? " Upload Part B for salary — Part A has TDS only."
+        : "";
     setParseSummary(
-      `Matched ${meta.matchedFields.length} field(s) from ${meta.lineCount} PDF lines: ${meta.matchedFields.join(", ")}`,
+      `Matched ${meta.matchedFields.length} field(s) from ${meta.lineCount} PDF lines: ${meta.matchedFields.join(", ")}.${partBHint}${
+        salary > 0 ? ` Gross salary ₹${salary.toLocaleString("en-IN")} filled in below.` : ""
+      }`,
     );
     setShowResults(false);
+    if (salary > 0) setTab("upload");
   };
 
   if (!mounted) {
@@ -122,14 +130,18 @@ export function CalculatorApp() {
       </div>
 
       <div className="space-y-6">
-        {isMobile ? (
+        {isMobile && !hasSalary ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-            <strong>On mobile:</strong> Enter your{" "}
-            <strong>annual gross salary</strong> below. PDF upload is optional.
+            <strong>On mobile:</strong> Upload Form 16 Part B or enter your{" "}
+            <strong>annual gross salary</strong> below.
           </div>
         ) : null}
 
-        <ExtraInputsPanel quick={quickInputs} onChange={setQuickInputs} />
+        <ExtraInputsPanel
+          quick={quickInputs}
+          onChange={setQuickInputs}
+          prefilledFromPdf={parsedFile !== null && quickInputs.annualGrossSalary > 0}
+        />
 
         {tab === "upload" ? <Form16Upload onParsed={handleParsed} /> : null}
 
@@ -198,8 +210,8 @@ export function CalculatorApp() {
 
         {!hasSalary ? (
           <p className="text-sm text-slate-500">
-            Enter <strong>annual gross salary</strong> above (from Form 16 Part B)
-            to calculate tax for {FY_LABEL}.
+            Upload Form 16 Part B or enter <strong>annual gross salary</strong>{" "}
+            above to calculate tax for {FY_LABEL}.
           </p>
         ) : null}
 

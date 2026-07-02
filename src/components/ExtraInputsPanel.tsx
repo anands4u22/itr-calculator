@@ -27,9 +27,14 @@ function RegimeBadge({ regime }: RegimeBadgeProps) {
 interface ExtraInputsPanelProps {
   quick: QuickInputs;
   onChange: (quick: QuickInputs) => void;
+  prefilledFromPdf?: boolean;
 }
 
-export function ExtraInputsPanel({ quick, onChange }: ExtraInputsPanelProps) {
+export function ExtraInputsPanel({
+  quick,
+  onChange,
+  prefilledFromPdf = false,
+}: ExtraInputsPanelProps) {
   const update = <K extends keyof QuickInputs>(key: K, value: QuickInputs[K]) => {
     onChange({ ...quick, [key]: value });
   };
@@ -77,8 +82,10 @@ export function ExtraInputsPanel({ quick, onChange }: ExtraInputsPanelProps) {
             <div className="flex flex-col justify-end rounded-xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-600">
               <p>
                 {quick.annualGrossSalary > 0
-                  ? `Using ${formatINR(quick.annualGrossSalary)} as gross salary`
-                  : "Enter your total annual salary from Form 16 Part B"}
+                  ? prefilledFromPdf
+                    ? `Pre-filled from PDF: ${formatINR(quick.annualGrossSalary)} (Part B u/s 17(1))`
+                    : `Using ${formatINR(quick.annualGrossSalary)} as gross salary`
+                  : "Upload Part B or enter total annual salary from Form 16 Part B"}
               </p>
             </div>
           </div>

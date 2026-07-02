@@ -220,12 +220,20 @@ export function parseForm16Text(text: string, fileName?: string): ParseResult {
   );
 
   if (!parsed.salary17_1) {
-    const gross = extractField(lines, flat, [
-      /^1\.?\s*gross salary/i,
-      /gross salary\s*\(?1\)?/i,
-      /total gross salary/i,
-      /salary as per provisions/i,
-    ], { pick: "max" });
+    const gross = extractField(
+      lines,
+      flat,
+      [
+        /^1\.?\s*gross\s+salary\b/i,
+        /\bgross\s+salary\s*\(?\s*1\s*\)?/i,
+        /total\s+amount\s+of\s+gross\s+salary/i,
+        /salary\s+as\s+per\s+provisions/i,
+      ],
+      {
+        pick: "max",
+        exclude: [/less:/i, /net\s+salary/i, /taxable/i, /deduction/i],
+      },
+    );
     if (gross) record("salary17_1 (gross fallback)", gross, parsed, "salary17_1");
   }
 

@@ -26,6 +26,35 @@ export const EMPTY_QUICK_INPUTS: QuickInputs = {
   annual80G: 0,
 };
 
+export function syncQuickInputsFromParse(
+  quick: QuickInputs,
+  parsed: Partial<Form16Data>,
+): QuickInputs {
+  const next = { ...quick };
+
+  const salary17_1 = parsed.salary17_1 ?? 0;
+  const perquisites = parsed.perquisites17_2 ?? 0;
+  const profits = parsed.profitsInLieu17_3 ?? 0;
+  const componentTotal = salary17_1 + perquisites + profits;
+
+  if (salary17_1 > 0) {
+    next.annualGrossSalary = salary17_1;
+  } else if (componentTotal > 0) {
+    next.annualGrossSalary = componentTotal;
+  }
+
+  if ((parsed.section80C ?? 0) > 0) next.annual80C = parsed.section80C!;
+  if ((parsed.section80CCD1B ?? 0) > 0) {
+    next.annual80CCD1B = parsed.section80CCD1B!;
+  }
+  if ((parsed.section80G ?? 0) > 0) next.annual80G = parsed.section80G!;
+  if ((parsed.section80CCD2 ?? 0) > 0) {
+    next.monthlyEmployerNps = Math.round(parsed.section80CCD2! / 12);
+  }
+
+  return next;
+}
+
 /** Quick input replaces Form 16 when filled (same field). */
 function overrideField(base: number, quick: number): number {
   return quick > 0 ? quick : base;

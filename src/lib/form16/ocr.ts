@@ -11,11 +11,6 @@ const TESSERACT_OPTS = {
     "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js",
 };
 
-function isMobileBrowser(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-}
-
 async function renderPageToCanvas(
   page: PdfPage,
   scale: number,
@@ -59,7 +54,7 @@ export async function ocrPdfDocument(
   onProgress?: OcrProgress,
 ): Promise<string> {
   const maxPages = Math.min(pdf.numPages, 4);
-  const scale = isMobileBrowser() ? 2 : 2.5;
+  const scale = 2.5;
   const parts: string[] = [];
 
   onProgress?.("Scanning PDF with OCR…");
